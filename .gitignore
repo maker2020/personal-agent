@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+data/
+.hearth/
+*.log
+coverage/
+.DS_Store
+dsh-home/
+*.tgz

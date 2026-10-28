@@ -1,0 +1,21 @@
+{
+  "name": "@hearth/dsh-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Hearth tools for DeepSeek Harness",
+  "main": "../../dist/packages/dsh-plugin/src/index.js",
+  "files": ["cordis.patch.yml", "package.json"],
+  "engines": {
+    "node": ">=22",
+    "dsh": ">=0.2.1-rc.2 <0.3.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.2"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
