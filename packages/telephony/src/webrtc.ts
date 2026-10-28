@@ -13,11 +13,23 @@ export type WebRtcLeg = {
  * ICE candidates are gathered into the answer so mobile browsers can connect
  * without a second trickle channel.
  */
-export async function answerUserVoice(offerSdp: string, onPcm: (pcm: Int16Array) => void, iceServers: RTCIceServer[] = []): Promise<WebRtcLeg> {
+export type VoiceRtcOptions = {
+  iceServers?: RTCIceServer[];
+  icePortMin?: number;
+  icePortMax?: number;
+  publicIp?: string;
+};
+
+export async function answerUserVoice(offerSdp: string, onPcm: (pcm: Int16Array) => void, iceServersOrOptions: RTCIceServer[] | VoiceRtcOptions = []): Promise<WebRtcLeg> {
   if (!/m=audio/.test(offerSdp)) throw new Error("offer has no audio");
+  const options: VoiceRtcOptions = Array.isArray(iceServersOrOptions) ? { iceServers: iceServersOrOptions } : iceServersOrOptions;
   const pc = new RTCPeerConnection({
     codecs: { audio: [usePCMU()] },
-    iceServers,
+    iceServers: options.iceServers ?? [],
+    ...(options.icePortMin && options.icePortMax && options.icePortMin <= options.icePortMax
+      ? { icePortRange: [options.icePortMin, options.icePortMax] as [number, number], iceUseTcp: false }
+      : {}),
+    ...(options.publicIp ? { iceAdditionalHostAddresses: [options.publicIp] } : {}),
   });
   const outbound = new MediaStreamTrack({ kind: "audio" });
   pc.addTrack(outbound);

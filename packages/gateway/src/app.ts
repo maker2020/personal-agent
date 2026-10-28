@@ -369,7 +369,11 @@ export async function startHearth(env: NodeJS.ProcessEnv = process.env): Promise
       leg = await answerUserVoice(sdp, (pcm) => {
         stats.inbound += pcm.length;
         session.pushInbound(pcm);
-      }, config.iceServers);
+      }, {
+        iceServers: config.iceServers,
+        ...(config.icePortMin && config.icePortMax ? { icePortMin: config.icePortMin, icePortMax: config.icePortMax } : {}),
+        ...(config.icePublicIp ? { publicIp: config.icePublicIp } : {}),
+      });
     } catch (error) {
       res.status(400).json({ error: error instanceof Error ? error.message : "webrtc_failed" });
       return;

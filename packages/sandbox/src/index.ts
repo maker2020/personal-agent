@@ -83,7 +83,11 @@ export class DockerSandbox implements SandboxBackend {
       await runArgv(["docker", "rm", "-f", name], workspace, 15000).catch(() => undefined);
       const runtime = process.env.HEARTH_SANDBOX_RUNTIME;
       const created = await runArgv(dockerRunArgs({ name, userId, workspace, image: this.image, ...(runtime ? { runtime } : {}) }), workspace, 30000);
-      if (created.code !== 0) throw new Error(`sandbox start failed: ${created.stderr || created.stdout}`);
+      if (created.code !== 0) {
+        const message = `sandbox start failed: ${created.stderr || created.stdout}`;
+        console.error(message);
+        throw new Error(message);
+      }
     }
     return { workspace, containerId: name };
   }
@@ -180,22 +184,42 @@ function run(command: string, cwd: string, timeoutMs: number, _env?: NodeJS.Proc
   return runArgv(["bash", "-lc", command], cwd, timeoutMs);
 }
 
-function runArgv(args: string[], cwd: string, timeoutMs: number, max = 20000): Promise<ExecResult> {
+export function runProcess(args: string[], cwd: string, timeoutMs: number, pathEnv = process.env.PATH ?? ""): Promise<ExecResult> {
+  return runArgv(args, cwd, timeoutMs, 20000, pathEnv);
+}
+
+function runArgv(args: string[], cwd: string, timeoutMs: number, max = 20000, pathEnv = process.env.PATH ?? ""): Promise<ExecResult> {
   return new Promise((resolve) => {
-    const child = spawn(args[0] ?? "true", args.slice(1), {
-      cwd,
-      env: { PATH: process.env.PATH ?? "", HOME: cwd, LANG: "C.UTF-8" },
-    });
+    let settled = false;
+    const finish = (result: ExecResult, timer?: ReturnType<typeof setTimeout>) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      resolve(result);
+    };
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(args[0] ?? "true", args.slice(1), {
+        cwd,
+        env: { PATH: pathEnv, HOME: cwd, LANG: "C.UTF-8" },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "spawn failed";
+      finish({ stdout: "", stderr: `spawn ${args[0] ?? "command"} failed: ${message}`, code: 127 });
+      return;
+    }
+    const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
     let stdout = "";
     let stderr = "";
-    const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => { stdout += chunk; });
-    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.stdout?.setEncoding("utf8");
+    child.stderr?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk) => { stdout += chunk; });
+    child.stderr?.on("data", (chunk) => { stderr += chunk; });
+    child.on("error", (error) => {
+      finish({ stdout: "", stderr: `spawn ${args[0] ?? "command"} failed: ${error.message}`, code: 127 }, timer);
+    });
     child.on("close", (code) => {
-      clearTimeout(timer);
-      resolve({ stdout: stdout.slice(0, max), stderr: stderr.slice(0, 8000), code: code ?? 1 });
+      finish({ stdout: stdout.slice(0, max), stderr: stderr.slice(0, 8000), code: code ?? 1 }, timer);
     });
   });
 }

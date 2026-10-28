@@ -1,6 +1,6 @@
 import { createLogger, listen, Router, authorizedInternal, loadConfig } from "../../shared/src/index.js";
 import { openStore } from "../../store/src/index.js";
-import { DockerSandbox, PlacementRouter } from "./index.js";
+import { DockerSandbox, PlacementRouter, runProcess } from "./index.js";
 
 const config = loadConfig(process.env);
 if (config.sandbox.backend !== "docker") {
@@ -13,7 +13,11 @@ await store.migrate();
 const docker = new DockerSandbox(config.sandbox.workspaceRoot, config.sandbox.dockerImage);
 const routerBackend = new PlacementRouter(store, config.sandbox.nodeId, docker, config.sandbox.advertiseUrl);
 const router = new Router();
-router.add("GET", "/healthz", async (_req, res) => res.json({ ok: true, service: "sandbox" }));
+router.add("GET", "/healthz", async (_req, res) => {
+  const docker = await runProcess(["docker", "--version"], process.cwd(), 5000);
+  const ok = docker.code === 0;
+  res.status(ok ? 200 : 503).json({ ok, service: "sandbox", docker: (docker.stdout || docker.stderr).trim() });
+});
 router.add("POST", "/internal/sandbox/ensure", async (req, res) => {
   if (!authorizedInternal(req, config.internalToken)) return res.status(401).json({ error: "unauthorized" });
   res.json(await routerBackend.ensure(String((req.body as { userId?: string })?.userId ?? "")));

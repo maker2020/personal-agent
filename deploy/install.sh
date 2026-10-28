@@ -39,7 +39,55 @@ ENV_KEYS=(
   HEARTH_DOMAIN
   SIP_ENABLED
   NPM_REGISTRY
+  HEARTH_HTTP_BIND
+  HEARTH_HTTP_PORT
+  HEARTH_PROXY
+  HEARTH_APT_MIRROR
+  HEARTH_IMAGE_PREFIX
+  DOCKER_CLI_BASE
+  HEARTH_STUN_URL
+  HEARTH_TURN_URL
+  HEARTH_TURN_USERNAME
+  HEARTH_TURN_PASSWORD
+  HEARTH_ICE_PUBLIC_IP
+  HEARTH_ICE_PORT_MIN
+  HEARTH_ICE_PORT_MAX
+  TURN_ENABLED
+  TURN_PORT
+  TURN_MIN_PORT
+  TURN_MAX_PORT
 )
+
+hearth_nginx_vhost() {
+  local domain="$1" port="$2"
+  cat <<EOF
+# Paste these locations into the BaoTa / nginx server that already terminates TLS.
+# Do not publish the gateway port on 0.0.0.0. proxy_pass stays on 127.0.0.1.
+server {
+    listen 80;
+    server_name ${domain};
+
+    location /metrics {
+        return 404;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:${port};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+}
+EOF
+}
 
 log() { printf 'hearth-install: %s\n' "$*"; }
 
@@ -149,8 +197,34 @@ hearth_merge_env() {
     next[HEARTH_PUBLIC_URL]="http://127.0.0.1:8787"
     next[HEARTH_COOKIE_SECURE]=0
   fi
-  if [[ "$MIRROR" == "cn" && -z "${next[NPM_REGISTRY]:-}" ]]; then
+  if [[ "${MIRROR:-}" == "cn" && -z "${next[NPM_REGISTRY]:-}" ]]; then
     next[NPM_REGISTRY]="https://registry.npmmirror.com"
+  fi
+  if [[ "${MIRROR:-}" == "cn" && -z "${next[HEARTH_APT_MIRROR]:-}" ]]; then
+    next[HEARTH_APT_MIRROR]="https://mirrors.aliyun.com"
+  fi
+  if [[ "${MIRROR:-}" == "cn" && -z "${next[HEARTH_IMAGE_PREFIX]:-}" ]]; then
+    next[HEARTH_IMAGE_PREFIX]="mirror.ccs.tencentyun.com/"
+  fi
+  if [[ "${MIRROR:-}" == "cn" && -z "${next[DOCKER_CLI_BASE]:-}" ]]; then
+    next[DOCKER_CLI_BASE]="https://mirrors.aliyun.com/docker-ce/linux/static/stable"
+  fi
+  if [[ "${PROXY_SET:-}" == "1" ]]; then
+    next[HEARTH_PROXY]="${PROXY:-none}"
+  elif [[ -z "${next[HEARTH_PROXY]:-}" ]]; then
+    if [[ -n "${next[HEARTH_DOMAIN]:-}" ]]; then
+      next[HEARTH_PROXY]="caddy"
+    else
+      next[HEARTH_PROXY]="none"
+    fi
+  fi
+  if [[ "${HTTP_BIND_SET:-}" == "1" ]]; then
+    next[HEARTH_HTTP_BIND]="${HTTP_BIND:-127.0.0.1}"
+  elif [[ "${next[HEARTH_PROXY]:-}" == "external" && -z "${next[HEARTH_HTTP_BIND]:-}" ]]; then
+    next[HEARTH_HTTP_BIND]="127.0.0.1"
+  fi
+  if [[ "${HTTP_PORT_SET:-}" == "1" ]]; then
+    next[HEARTH_HTTP_PORT]="${HTTP_PORT:-8787}"
   fi
 
   local -a defaults=(
@@ -169,6 +243,14 @@ hearth_merge_env() {
     HEARTH_SANDBOX_IMAGE=hearth-sandbox:local
     HEARTH_WORKSPACE_ROOT=/var/lib/hearth/workspaces
     SIP_ENABLED=0
+    HEARTH_HTTP_BIND=127.0.0.1
+    HEARTH_HTTP_PORT=8787
+    HEARTH_ICE_PORT_MIN=50000
+    HEARTH_ICE_PORT_MAX=50199
+    TURN_ENABLED=0
+    TURN_PORT=3478
+    TURN_MIN_PORT=49160
+    TURN_MAX_PORT=49200
   )
   for item in "${defaults[@]}"; do
     key="${item%%=*}"
@@ -186,9 +268,17 @@ hearth_merge_env() {
   if [[ -z "${next[NPM_REGISTRY]+x}" ]]; then
     next[NPM_REGISTRY]=""
   fi
+  local optional
+  for optional in HEARTH_APT_MIRROR HEARTH_IMAGE_PREFIX DOCKER_CLI_BASE HEARTH_STUN_URL HEARTH_TURN_URL HEARTH_TURN_USERNAME HEARTH_TURN_PASSWORD HEARTH_ICE_PUBLIC_IP; do
+    if [[ -z "${next[$optional]+x}" ]]; then
+      next["$optional"]=""
+    fi
+  done
 
   EFFECTIVE_DOMAIN="${next[HEARTH_DOMAIN]:-}"
   EFFECTIVE_SIP="${next[SIP_ENABLED]:-0}"
+  EFFECTIVE_PROXY="${next[HEARTH_PROXY]:-none}"
+  EFFECTIVE_HTTP_PORT="${next[HEARTH_HTTP_PORT]:-8787}"
 
   if [[ "$DRY_RUN" == 1 ]]; then
     log "would merge ${ENV_FILE} without writing it"
@@ -359,6 +449,12 @@ main() {
   local MIRROR="${HEARTH_MIRROR:-}"
   local DOMAIN_SET=0
   local DEEPSEEK_KEY_SET=0
+  local PROXY="${HEARTH_PROXY:-}"
+  local PROXY_SET=0
+  local HTTP_PORT="${HEARTH_HTTP_PORT:-8787}"
+  local HTTP_PORT_SET=0
+  local HTTP_BIND="${HEARTH_HTTP_BIND:-127.0.0.1}"
+  local HTTP_BIND_SET=0
   if [[ -n "$DEEPSEEK_KEY" ]]; then
     DEEPSEEK_KEY_SET=1
   fi
@@ -371,18 +467,25 @@ main() {
       --domain) DOMAIN="$2"; DOMAIN_SET=1; shift 2 ;;
       --deepseek-key) DEEPSEEK_KEY="$2"; DEEPSEEK_KEY_SET=1; shift 2 ;;
       --mirror) MIRROR="$2"; shift 2 ;;
+      --proxy) PROXY="$2"; PROXY_SET=1; shift 2 ;;
+      --no-caddy) PROXY="external"; PROXY_SET=1; shift ;;
+      --http-port) HTTP_PORT="$2"; HTTP_PORT_SET=1; shift 2 ;;
+      --http-bind) HTTP_BIND="$2"; HTTP_BIND_SET=1; shift 2 ;;
       --dry-run) DRY_RUN=1; shift ;;
       --noninteractive) NONINTERACTIVE=1; shift ;;
       --os) OS_OVERRIDE="$2"; shift 2 ;;
       -h|--help)
         cat <<'EOF'
 usage: install.sh [--prefix DIR] [--domain HOST] [--repo URL] [--ref REF] [--branch REF]
-                  [--deepseek-key KEY] [--mirror cn] [--dry-run] [--noninteractive]
+                  [--deepseek-key KEY] [--mirror cn] [--proxy caddy|external|none] [--no-caddy]
+                  [--http-port PORT] [--http-bind ADDR] [--dry-run] [--noninteractive]
                   [--os debian|rhel|centos7]
 
 DEEPSEEK_API_KEY is read from the environment. A terminal with no key gets a hidden prompt.
 --deepseek-key is optional. Re-running keeps POSTGRES_PASSWORD, HEARTH_ADMIN_PASSWORD,
 and HEARTH_INTERNAL_TOKEN already stored in .env. --dry-run writes nothing and does not need root.
+--proxy external (or --no-caddy) does not start Caddy. The gateway stays on 127.0.0.1 and a
+sample nginx vhost is written for an existing reverse proxy such as BaoTa.
 EOF
         exit 0
         ;;
@@ -394,12 +497,19 @@ EOF
     echo "unknown mirror: $MIRROR (supported: cn)" >&2
     exit 2
   fi
+  if [[ -n "$PROXY" && "$PROXY" != "caddy" && "$PROXY" != "external" && "$PROXY" != "none" ]]; then
+    echo "unknown proxy: $PROXY (supported: caddy, external, none)" >&2
+    exit 2
+  fi
 
   export DRY_RUN DEEPSEEK_KEY DEEPSEEK_KEY_SET DOMAIN DOMAIN_SET MIRROR
+  export PROXY PROXY_SET HTTP_PORT HTTP_PORT_SET HTTP_BIND HTTP_BIND_SET
   local ENV_FILE="$PREFIX/.env"
   export ENV_FILE
   EFFECTIVE_DOMAIN=""
   EFFECTIVE_SIP="0"
+  EFFECTIVE_PROXY="${PROXY:-none}"
+  EFFECTIVE_HTTP_PORT="${HTTP_PORT:-8787}"
 
   local family plan
   family="$(hearth_detect_os)"
@@ -417,11 +527,17 @@ EOF
     fi
     log "would merge ${ENV_FILE} and keep an existing POSTGRES_PASSWORD"
     if [[ "$MIRROR" == "cn" ]]; then
+      log "would set HEARTH_APT_MIRROR=https://mirrors.aliyun.com HEARTH_IMAGE_PREFIX=mirror.ccs.tencentyun.com/ DOCKER_CLI_BASE=https://mirrors.aliyun.com/docker-ce/linux/static/stable"
       if [[ -n "${HEARTH_DOCKER_REGISTRY_MIRROR:-}" ]]; then
         log "would write /etc/docker/daemon.json registry-mirrors from HEARTH_DOCKER_REGISTRY_MIRROR"
       else
         log "docker registry-mirrors left unset; set HEARTH_DOCKER_REGISTRY_MIRROR to the accelerator URL from the Aliyun container registry console"
       fi
+    fi
+    if [[ "$PROXY" == "external" ]]; then
+      log "would bind gateway ${HTTP_BIND}:${HTTP_PORT} and would not start Caddy"
+      log "would write nginx vhost:"
+      hearth_nginx_vhost "${DOMAIN:-example.com}" "$HTTP_PORT"
     fi
     log "dry-run writes nothing"
     exit 0
@@ -467,7 +583,7 @@ EOF
   mkdir -p "$workspace"
   chmod 755 "$workspace"
 
-  if [[ -n "$EFFECTIVE_DOMAIN" ]]; then
+  if [[ "$EFFECTIVE_PROXY" == "caddy" && -n "$EFFECTIVE_DOMAIN" ]]; then
     mkdir -p "$PREFIX/deploy"
     cat > "$PREFIX/deploy/Caddyfile" <<EOF
 ${EFFECTIVE_DOMAIN} {
@@ -476,16 +592,28 @@ ${EFFECTIVE_DOMAIN} {
 }
 EOF
   fi
+  if [[ "$EFFECTIVE_PROXY" == "external" ]]; then
+    mkdir -p "$PREFIX/deploy/nginx"
+    hearth_nginx_vhost "${EFFECTIVE_DOMAIN:-_}" "$EFFECTIVE_HTTP_PORT" > "$PREFIX/deploy/nginx/hearth.conf"
+    log "nginx vhost written to ${PREFIX}/deploy/nginx/hearth.conf"
+    log "gateway listens on 127.0.0.1:${EFFECTIVE_HTTP_PORT}; Caddy was not started"
+  fi
 
-  local compose_args="-f ${PREFIX}/docker-compose.yml"
-  if [[ "$EFFECTIVE_SIP" == "1" ]]; then
-    compose_args="${compose_args} -f ${PREFIX}/docker-compose.pstn.yml"
-    log "SIP_ENABLED=1; systemd will publish UDP 5060 and the RTP range"
+  local -a compose_parts=()
+  if [[ -f "$PREFIX/deploy/compose-args.sh" ]]; then
+    # shellcheck disable=SC1091
+    source "$PREFIX/deploy/compose-args.sh"
+    mapfile -t compose_parts < <(hearth_compose_arguments "$PREFIX")
+  else
+    compose_parts=(-f "$PREFIX/docker-compose.yml")
+    if [[ "$EFFECTIVE_SIP" == "1" ]]; then
+      compose_parts+=(-f "$PREFIX/docker-compose.pstn.yml")
+    fi
+    if [[ "$EFFECTIVE_PROXY" == "caddy" && -n "$EFFECTIVE_DOMAIN" ]]; then
+      compose_parts+=(--profile tls)
+    fi
   fi
-  local profile=""
-  if [[ -n "$EFFECTIVE_DOMAIN" ]]; then
-    profile="--profile tls"
-  fi
+  local compose_joined="${compose_parts[*]}"
 
   mkdir -p "$PREFIX/deploy/systemd"
   cat > "$PREFIX/deploy/systemd/hearth.service" <<EOF
@@ -498,26 +626,34 @@ Requires=docker.service
 Type=oneshot
 RemainAfterExit=yes
 WorkingDirectory=${PREFIX}
-ExecStart=/usr/bin/docker compose --project-directory ${PREFIX} ${compose_args} ${profile} up -d --remove-orphans --build
-ExecStop=/usr/bin/docker compose --project-directory ${PREFIX} ${compose_args} ${profile} down
+ExecStart=/usr/bin/docker compose --project-directory ${PREFIX} ${compose_joined} up -d --remove-orphans --build
+ExecStop=/usr/bin/docker compose --project-directory ${PREFIX} ${compose_joined} down
 TimeoutStartSec=0
 
 [Install]
 WantedBy=multi-user.target
 EOF
   cp "$PREFIX/deploy/systemd/hearth.service" /etc/systemd/system/hearth.service
-  docker build -f "$PREFIX/Dockerfile.sandbox" -t hearth-sandbox:local "$PREFIX"
-  # shellcheck disable=SC2086
-  docker compose --project-directory "$PREFIX" ${compose_args} ${profile} up -d --build
+  local image_prefix apt_mirror
+  image_prefix="$(grep -E '^HEARTH_IMAGE_PREFIX=' "$ENV_FILE" | head -n 1 | cut -d= -f2- || true)"
+  apt_mirror="$(grep -E '^HEARTH_APT_MIRROR=' "$ENV_FILE" | head -n 1 | cut -d= -f2- || true)"
+  docker build -f "$PREFIX/Dockerfile.sandbox" \
+    --build-arg "HEARTH_IMAGE_PREFIX=${image_prefix}" \
+    --build-arg "APT_MIRROR=${apt_mirror}" \
+    -t hearth-sandbox:local "$PREFIX"
+  docker compose --project-directory "$PREFIX" "${compose_parts[@]}" up -d --build
   systemctl daemon-reload
   systemctl enable --now hearth.service
 
   log "admin user: owner"
-  if [[ -n "$EFFECTIVE_DOMAIN" ]]; then
+  if [[ "$EFFECTIVE_PROXY" == "external" ]]; then
+    log "gateway health: http://127.0.0.1:${EFFECTIVE_HTTP_PORT}/healthz"
+    log "put the nginx locations in front of that address; TLS stays on the existing proxy"
+  elif [[ -n "$EFFECTIVE_DOMAIN" && "$EFFECTIVE_PROXY" == "caddy" ]]; then
     log "gateway health: https://${EFFECTIVE_DOMAIN}/healthz"
   else
-    log "gateway health: http://127.0.0.1:8787/healthz"
-    log "no domain set; TLS proxy was not started. Pass --domain to enable Caddy."
+    log "gateway health: http://127.0.0.1:${EFFECTIVE_HTTP_PORT}/healthz"
+    log "no domain set; TLS proxy was not started. Pass --domain to enable Caddy, or --proxy external for an existing nginx."
   fi
   log "sentinel, gateway, and sandbox-manager are separate compose services"
   log "workspace bind: ${workspace}"

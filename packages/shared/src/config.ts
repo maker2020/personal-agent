@@ -98,9 +98,14 @@ export type AppConfig = {
   trunkConcurrency: number;
   userCallConcurrency: number;
   userCallRatePerHour: number;
-  iceServers: Array<{ urls: string }>;
+  iceServers: IceServer[];
+  icePortMin?: number;
+  icePortMax?: number;
+  icePublicIp?: string;
   plan: "personal" | "enterprise";
 };
+
+export type IceServer = { urls: string | string[]; username?: string; credential?: string };
 
 function bool(value: string | undefined, fallback: boolean): boolean {
   if (value == null || value === "") return fallback;
@@ -122,6 +127,46 @@ function rolesOf(value: string | undefined): AppConfig["roles"] {
   }
   if (roles.size === 0) roles.add("gateway");
   return roles;
+}
+
+export function iceServersFromEnv(env: NodeJS.ProcessEnv): IceServer[] {
+  const servers: IceServer[] = [];
+  if (env.HEARTH_ICE_SERVERS) {
+    try {
+      const parsed = JSON.parse(env.HEARTH_ICE_SERVERS) as unknown;
+      if (Array.isArray(parsed)) {
+        for (const item of parsed) {
+          if (!item || typeof item !== "object") continue;
+          const record = item as { urls?: unknown; username?: unknown; credential?: unknown };
+          if (typeof record.urls !== "string" && !Array.isArray(record.urls)) continue;
+          const server: IceServer = { urls: record.urls as string | string[] };
+          if (typeof record.username === "string") server.username = record.username;
+          if (typeof record.credential === "string") server.credential = record.credential;
+          servers.push(server);
+        }
+      }
+    } catch {
+      servers.length = 0;
+    }
+  }
+  if (servers.length === 0 && env.HEARTH_STUN_URL !== "") {
+    servers.push({ urls: env.HEARTH_STUN_URL ?? "stun:stun.l.google.com:19302" });
+  }
+  if (env.HEARTH_TURN_URL) {
+    const turn: IceServer = { urls: env.HEARTH_TURN_URL };
+    if (env.HEARTH_TURN_USERNAME) turn.username = env.HEARTH_TURN_USERNAME;
+    if (env.HEARTH_TURN_PASSWORD) turn.credential = env.HEARTH_TURN_PASSWORD;
+    servers.push(turn);
+  }
+  return servers;
+}
+
+function icePorts(env: NodeJS.ProcessEnv): { icePortMin?: number; icePortMax?: number } {
+  if (!env.HEARTH_ICE_PORT_MIN || !env.HEARTH_ICE_PORT_MAX) return {};
+  const icePortMin = num(env.HEARTH_ICE_PORT_MIN, 0);
+  const icePortMax = num(env.HEARTH_ICE_PORT_MAX, 0);
+  if (icePortMin <= 0 || icePortMax < icePortMin) return {};
+  return { icePortMin, icePortMax };
 }
 
 function templates(value: string | undefined): Record<string, string> {
@@ -245,7 +290,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     trunkConcurrency: num(env.SIP_TRUNK_CONCURRENCY, 2),
     userCallConcurrency: num(env.SIP_USER_CONCURRENCY, 1),
     userCallRatePerHour: num(env.SIP_USER_RATE_PER_HOUR, 20),
-    iceServers: env.HEARTH_STUN_URL === "" ? [] : [{ urls: env.HEARTH_STUN_URL ?? "stun:stun.l.google.com:19302" }],
+    iceServers: iceServersFromEnv(env),
+    ...icePorts(env),
+    ...(env.HEARTH_ICE_PUBLIC_IP?.trim() ? { icePublicIp: env.HEARTH_ICE_PUBLIC_IP.trim() } : {}),
     plan: env.HEARTH_PLAN === "enterprise" ? "enterprise" : "personal",
   };
 }

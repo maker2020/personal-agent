@@ -14,7 +14,7 @@ npm test
 npm start
 ```
 
-浏览器打开 http://127.0.0.1:8787 。未设置 `HEARTH_ADMIN_PASSWORD` 时，开发账号是 `owner` / `hearth-dev`。
+浏览器打开 http://127.0.0.1:8787 。未设置 `HEARTH_ADMIN_PASSWORD` 时，开发账号是 `owner` / `hearth-dev`。ICE 服务器、UDP 端口和 coturn 见 [docs/voice.zh.md](docs/voice.zh.md)。
 
 `node scripts/verify-voice-browser.mjs` 用无头 Chrome、手机尺寸视口登录，并确认通话状态变为「通话中」。
 
@@ -54,9 +54,19 @@ sudo --preserve-env=DEEPSEEK_API_KEY bash -c 'curl -fsSL https://raw.githubuserc
 
 `--branch` 与 `--ref` 相同，会传给 `git clone --branch`。再次运行会保留 `.env` 里已有的 `POSTGRES_PASSWORD`、`HEARTH_ADMIN_PASSWORD` 和 `HEARTH_INTERNAL_TOKEN`。`--dry-run` 只打印计划，不写任何文件，也不需要 root。`--deepseek-key` 仍然可选。
 
-中国大陆服务器加 `--mirror cn`（或 `HEARTH_MIRROR=cn`）：Docker CE 从 `https://mirrors.aliyun.com/docker-ce` 安装（Debian 和 RHEL 8+ 走 `get.docker.com --mirror Aliyun`，CentOS 7 走 yum）。镜像构建里的 npm 使用 `https://registry.npmmirror.com`。Docker Hub 加速地址是账号自己的，到容器镜像服务控制台的「镜像工具 → 镜像加速器」复制，设到 `HEARTH_DOCKER_REGISTRY_MIRROR`。阿里云 VPC 内网可设 `HEARTH_DOCKER_MIRROR_BASE=http://mirrors.cloud.aliyuncs.com/docker-ce`。CentOS 7 不带 `--mirror cn` 时会直接拒绝：`get.docker.com` 已不再支持它，系统上也没有 dnf。
+中国大陆服务器加 `--mirror cn`（或 `HEARTH_MIRROR=cn`）：Docker CE 从 `https://mirrors.aliyun.com/docker-ce` 安装（Debian 和 RHEL 8+ 走 `get.docker.com --mirror Aliyun`，CentOS 7 走 yum）。镜像构建使用 apt `https://mirrors.aliyun.com`、npm `https://registry.npmmirror.com`、静态 Docker 客户端 `https://mirrors.aliyun.com/docker-ce/linux/static/stable`，基础镜像前缀是 `mirror.ccs.tencentyun.com/`（`HEARTH_IMAGE_PREFIX`）。apt 镜像可用 `HEARTH_APT_MIRROR` 改成腾讯云内网 `http://mirrors.tencentyun.com` 或公网 `https://mirrors.cloud.tencent.com`。Docker Hub 加速地址是账号自己的，到容器镜像服务控制台的「镜像工具 → 镜像加速器」复制，设到 `HEARTH_DOCKER_REGISTRY_MIRROR`。阿里云 VPC 内网可设 `HEARTH_DOCKER_MIRROR_BASE=http://mirrors.cloud.aliyuncs.com/docker-ce`。CentOS 7 不带 `--mirror cn` 时会直接拒绝：`get.docker.com` 已不再支持它，系统上也没有 dnf。
 
-脚本会安装 Docker 和 compose 插件，构建 `hearth-sandbox:local`，并用 systemd 拉起相互独立的网关、哨兵和沙箱管理器。带 `--domain` 时由 Caddy 做 HTTPS。备份和升级：`deploy/backup.sh`、`deploy/restore.sh`、`deploy/upgrade.sh`。
+已经有宝塔 nginx 时：
+
+```bash
+sudo --preserve-env=DEEPSEEK_API_KEY ./deploy/install.sh --proxy external --domain agent.example.com --http-port 8787
+```
+
+`--no-caddy` 等于 `--proxy external`。不启动 Caddy，网关只发布在 `127.0.0.1:8787`（`HEARTH_HTTP_BIND` / `HEARTH_HTTP_PORT`），并写出 `deploy/nginx/hearth.conf`：`proxy_buffering off`、长超时、WebSocket 升级头，以及关闭 `/metrics`。把这些 location 放进已经有证书的 server 块。
+
+脚本会安装 Docker 和 compose 插件，构建 `hearth-sandbox:local`，并用 systemd 拉起相互独立的网关、哨兵和沙箱管理器。管理器镜像里带 Docker 客户端。默认在有域名时由 Caddy 做 HTTPS。备份和升级：`deploy/backup.sh`、`deploy/restore.sh`、`deploy/upgrade.sh`。存在 `docker-compose.local.yml` 时升级会带上它，`HEARTH_COMPOSE_FILES`（冒号分隔）里的文件也会带上。
+
+应用内语音走 UDP，不走 HTTPS 反代。compose 发布 UDP 50000–50199，需要中继时用 `--profile turn` 启动 coturn。把 `HEARTH_ICE_PUBLIC_IP` 设成公网地址。中国大陆访问不到 `stun.l.google.com`。端口和示例见 [docs/voice.zh.md](docs/voice.zh.md)。
 
 沙箱管理器把 `/var/lib/hearth/workspaces`（也可用绝对路径 `HEARTH_WORKSPACE_ROOT`）以相同路径挂载进去。每个用户的容器使用这个宿主机路径，因此 `sandbox_write` 和 `sandbox_exec` 看到的是同一批文件，属主是 uid 65534。
 

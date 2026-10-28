@@ -43,6 +43,8 @@ test("dry-run selects debian and centos 7 paths", async () => {
   assert.equal(china.status, 0, china.stderr);
   assert.match(china.stdout, /mirrors\.aliyun\.com\/docker-ce/);
   assert.match(china.stdout, /registry\.npmmirror\.com/);
+  assert.match(china.stdout, /HEARTH_APT_MIRROR=https:\/\/mirrors\.aliyun\.com/);
+  assert.match(china.stdout, /mirror\.ccs\.tencentyun\.com\//);
   assert.match(china.stdout, /HEARTH_DOCKER_REGISTRY_MIRROR/);
   const refused = runInstall(["--dry-run", "--noninteractive", "--os", "centos7", "--prefix", prefix]);
   assert.equal(refused.status, 1);
@@ -91,6 +93,35 @@ echo kept
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
   assert.match(result.stdout ?? "", /kept existing POSTGRES_PASSWORD/);
   assert.match(result.stdout ?? "", /kept\n?$/);
+});
+
+test("external proxy dry-run prints an nginx vhost and writes nothing", async () => {
+  const parent = await mkdtemp(path.join(tmpdir(), "hearth-proxy-"));
+  const prefix = path.join(parent, "opt-hearth");
+  const result = runInstall(["--dry-run", "--noninteractive", "--os", "debian", "--prefix", prefix, "--proxy", "external", "--domain", "agent.example.com", "--http-port", "8787"]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /would not start Caddy/);
+  assert.match(result.stdout, /proxy_buffering off/);
+  assert.match(result.stdout, /proxy_set_header Upgrade/);
+  assert.match(result.stdout, /location \/metrics/);
+  assert.match(result.stdout, /127\.0\.0\.1:8787/);
+  assert.equal(existsSync(prefix), false);
+});
+
+test("upgrade compose args keep a local override and skip caddy for an external proxy", () => {
+  const result = spawnSync("bash", ["-lc", `
+set -euo pipefail
+source "${path.join(process.cwd(), "deploy/compose-args.sh")}"
+dir=$(mktemp -d)
+echo 'services: {}' > "$dir/docker-compose.local.yml"
+printf '%s\n' 'HEARTH_DOMAIN=agent.example.com' 'HEARTH_PROXY=external' 'TURN_ENABLED=1' > "$dir/.env"
+hearth_compose_arguments "$dir"
+`], { encoding: "utf8" });
+  assert.equal(result.status, 0, result.stderr);
+  const text = result.stdout ?? "";
+  assert.match(text, /docker-compose\.local\.yml/);
+  assert.match(text, /--profile\nturn/);
+  assert.equal(text.includes("--profile\ntls"), false);
 });
 
 test("install.sh prompts for the key with hidden input", async () => {

@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { MediaStreamTrack, RTCPeerConnection, RtpHeader, RtpPacket, usePCMU } from "werift";
 import { pcmToPayload } from "../packages/telephony/src/g711.js";
+import { answerUserVoice } from "../packages/telephony/src/webrtc.js";
 import { startHearth } from "../packages/gateway/src/app.js";
+import { iceServersFromEnv } from "../packages/shared/src/config.js";
 import { entitlements } from "../packages/shared/src/entitlements.js";
 
 test("personal plan does not include pstn or sms", () => {
@@ -16,6 +18,46 @@ test("personal plan does not include pstn or sms", () => {
   const enterprise = entitlements("enterprise", { PSTN_ENABLED: "1", SMS_ENABLED: "1" });
   assert.equal(enterprise.pstn, true);
   assert.equal(enterprise.dedicatedDid, true);
+});
+
+test("ice servers accept stun, turn credentials, and a json list", () => {
+  assert.deepEqual(iceServersFromEnv({ HEARTH_STUN_URL: "" }), []);
+  const turn = iceServersFromEnv({
+    HEARTH_STUN_URL: "stun:203.0.113.10:3478",
+    HEARTH_TURN_URL: "turn:203.0.113.10:3478?transport=udp",
+    HEARTH_TURN_USERNAME: "hearth",
+    HEARTH_TURN_PASSWORD: "secret",
+  });
+  assert.equal(turn[0]?.urls, "stun:203.0.113.10:3478");
+  assert.equal(turn[1]?.username, "hearth");
+  assert.equal(turn[1]?.credential, "secret");
+  const listed = iceServersFromEnv({
+    HEARTH_STUN_URL: "",
+    HEARTH_ICE_SERVERS: JSON.stringify([{ urls: ["stun:stun.example:3478"], username: "u", credential: "p" }]),
+  });
+  assert.deepEqual(listed[0], { urls: ["stun:stun.example:3478"], username: "u", credential: "p" });
+});
+
+test("answer advertises the public address on a pinned udp port", async () => {
+  const pc = new RTCPeerConnection({ codecs: { audio: [usePCMU()] }, iceServers: [] });
+  pc.addTrack(new MediaStreamTrack({ kind: "audio" }));
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+  const leg = await answerUserVoice(pc.localDescription?.sdp ?? "", () => undefined, {
+    iceServers: [],
+    icePortMin: 40110,
+    icePortMax: 40130,
+    publicIp: "203.0.113.10",
+  });
+  try {
+    assert.match(leg.answerSdp, /203\.0\.113\.10/);
+    const ports = [...leg.answerSdp.matchAll(/203\.0\.113\.10 (\d+)/g)].map((match) => Number(match[1]));
+    assert.ok(ports.length > 0);
+    assert.ok(ports.every((port) => port >= 40110 && port <= 40130));
+  } finally {
+    await leg.close();
+    await pc.close();
+  }
 });
 
 test("in-app webrtc call negotiates PCMU and carries audio", async () => {

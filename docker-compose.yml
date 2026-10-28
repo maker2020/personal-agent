@@ -1,6 +1,14 @@
+x-hearth-build: &hearth-build
+  context: .
+  args:
+    NPM_REGISTRY: ${NPM_REGISTRY:-}
+    APT_MIRROR: ${HEARTH_APT_MIRROR:-}
+    DOCKER_CLI_BASE: ${DOCKER_CLI_BASE:-https://download.docker.com/linux/static/stable}
+    HEARTH_IMAGE_PREFIX: ${HEARTH_IMAGE_PREFIX:-}
+
 services:
   postgres:
-    image: postgres:16-alpine
+    image: ${HEARTH_IMAGE_PREFIX:-}library/postgres:16-alpine
     environment:
       POSTGRES_USER: hearth
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
@@ -15,10 +23,7 @@ services:
     restart: unless-stopped
 
   sandbox:
-    build:
-      context: .
-      args:
-        NPM_REGISTRY: ${NPM_REGISTRY:-}
+    build: *hearth-build
     command: ["node", "dist/packages/sandbox/src/main.js"]
     env_file: .env
     environment:
@@ -36,13 +41,16 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8790/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
     restart: unless-stopped
 
   gateway:
-    build:
-      context: .
-      args:
-        NPM_REGISTRY: ${NPM_REGISTRY:-}
+    build: *hearth-build
     command: ["node", "dist/packages/gateway/src/main.js"]
     env_file: .env
     environment:
@@ -53,6 +61,14 @@ services:
       HEARTH_SANDBOX_URL: http://sandbox:8790
       HEARTH_GATEWAY_HOST: 0.0.0.0
       HEARTH_GATEWAY_PORT: 8787
+      HEARTH_STUN_URL: ${HEARTH_STUN_URL:-}
+      HEARTH_ICE_SERVERS: ${HEARTH_ICE_SERVERS:-}
+      HEARTH_TURN_URL: ${HEARTH_TURN_URL:-}
+      HEARTH_TURN_USERNAME: ${HEARTH_TURN_USERNAME:-}
+      HEARTH_TURN_PASSWORD: ${HEARTH_TURN_PASSWORD:-}
+      HEARTH_ICE_PUBLIC_IP: ${HEARTH_ICE_PUBLIC_IP:-}
+      HEARTH_ICE_PORT_MIN: ${HEARTH_ICE_PORT_MIN:-50000}
+      HEARTH_ICE_PORT_MAX: ${HEARTH_ICE_PORT_MAX:-50199}
       DATABASE_URL: postgres://hearth:${POSTGRES_PASSWORD}@postgres:5432/hearth
       DSH_HOME: /data/dsh
     volumes:
@@ -61,9 +77,10 @@ services:
       postgres:
         condition: service_healthy
       sandbox:
-        condition: service_started
+        condition: service_healthy
     ports:
-      - "127.0.0.1:8787:8787"
+      - "${HEARTH_HTTP_BIND:-127.0.0.1}:${HEARTH_HTTP_PORT:-8787}:8787"
+      - "${HEARTH_ICE_PORT_MIN:-50000}-${HEARTH_ICE_PORT_MAX:-50199}:${HEARTH_ICE_PORT_MIN:-50000}-${HEARTH_ICE_PORT_MAX:-50199}/udp"
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8787/healthz"]
       interval: 10s
@@ -72,10 +89,7 @@ services:
     restart: unless-stopped
 
   sentinel:
-    build:
-      context: .
-      args:
-        NPM_REGISTRY: ${NPM_REGISTRY:-}
+    build: *hearth-build
     command: ["node", "dist/packages/sentinel/src/main.js"]
     env_file: .env
     environment:
@@ -97,8 +111,28 @@ services:
       retries: 12
     restart: unless-stopped
 
+  coturn:
+    image: ${HEARTH_IMAGE_PREFIX:-}coturn/coturn:4.18.0
+    profiles: ["turn"]
+    restart: unless-stopped
+    environment:
+      HEARTH_TURN_USERNAME: ${HEARTH_TURN_USERNAME:-}
+      HEARTH_TURN_PASSWORD: ${HEARTH_TURN_PASSWORD:-}
+      HEARTH_ICE_PUBLIC_IP: ${HEARTH_ICE_PUBLIC_IP:-}
+      TURN_PORT: ${TURN_PORT:-3478}
+      TURN_MIN_PORT: ${TURN_MIN_PORT:-49160}
+      TURN_MAX_PORT: ${TURN_MAX_PORT:-49200}
+      TURN_REALM: ${TURN_REALM:-hearth}
+    volumes:
+      - ./deploy/coturn/start.sh:/start.sh:ro
+    entrypoint: ["/bin/sh", "/start.sh"]
+    ports:
+      - "${TURN_PORT:-3478}:${TURN_PORT:-3478}/udp"
+      - "${TURN_PORT:-3478}:${TURN_PORT:-3478}/tcp"
+      - "${TURN_MIN_PORT:-49160}-${TURN_MAX_PORT:-49200}:${TURN_MIN_PORT:-49160}-${TURN_MAX_PORT:-49200}/udp"
+
   caddy:
-    image: caddy:2
+    image: ${HEARTH_IMAGE_PREFIX:-}library/caddy:2
     profiles: ["tls"]
     ports:
       - "80:80"
@@ -114,7 +148,7 @@ services:
     restart: unless-stopped
 
   mailpit:
-    image: axllent/mailpit:v1.21
+    image: ${HEARTH_IMAGE_PREFIX:-}axllent/mailpit:v1.21
     profiles: ["dev"]
     ports:
       - "127.0.0.1:1025:1025"

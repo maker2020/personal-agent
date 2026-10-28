@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { MemorySaver } from "@langchain/langgraph";
 import { TaskMemory } from "../packages/memory/src/index.js";
-import { DockerSandbox, PlacementRouter, dockerRunArgs, userWorkspace, volumeBind } from "../packages/sandbox/src/index.js";
+import { DockerSandbox, PlacementRouter, dockerRunArgs, runProcess, userWorkspace, volumeBind } from "../packages/sandbox/src/index.js";
 import { MemoryStore } from "../packages/store/src/memory.js";
 import { invokeTool, type ToolHost } from "../packages/tools/src/registry.js";
 
@@ -24,6 +24,15 @@ test("per-user bind source is the workspace path the manager writes", async () =
   const pstn = await readFile(path.join(process.cwd(), "docker-compose.pstn.yml"), "utf8");
   assert.match(pstn, /\$\{SIP_SIGNAL_PORT:-5060\}:\$\{SIP_SIGNAL_PORT:-5060\}\/udp/);
   assert.match(pstn, /\$\{SIP_RTP_PORT_MIN:-10000\}-\$\{SIP_RTP_PORT_MAX:-10199\}:\$\{SIP_RTP_PORT_MIN:-10000\}-\$\{SIP_RTP_PORT_MAX:-10199\}\/udp/);
+  assert.match(compose, /\$\{HEARTH_HTTP_BIND:-127\.0\.0\.1\}/);
+  assert.match(compose, /\$\{HEARTH_HTTP_PORT:-8787\}/);
+  assert.match(compose, /\$\{HEARTH_ICE_PORT_MIN:-50000\}-\$\{HEARTH_ICE_PORT_MAX:-50199\}/);
+});
+
+test("a missing docker cli returns an error instead of crashing", async () => {
+  const result = await runProcess(["docker", "--version"], process.cwd(), 5000, "/nonexistent");
+  assert.equal(result.code, 127);
+  assert.match(result.stderr, /spawn docker failed/);
 });
 
 function dockerReady(): boolean {

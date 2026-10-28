@@ -1,6 +1,18 @@
-FROM debian:bookworm-slim
-RUN apt-get update \
-  && apt-get install -y --no-install-recommends bash ca-certificates coreutils \
-  && rm -rf /var/lib/apt/lists/*
+ARG HEARTH_IMAGE_PREFIX=
+FROM ${HEARTH_IMAGE_PREFIX}library/debian:bookworm-slim
+
+ARG APT_MIRROR=
+RUN if [ -n "$APT_MIRROR" ]; then \
+      mirror="${APT_MIRROR%/}"; \
+      if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+        sed -i "s#http://deb.debian.org#${mirror}#g; s#https://deb.debian.org#${mirror}#g" /etc/apt/sources.list.d/debian.sources; \
+      fi; \
+      if [ -f /etc/apt/sources.list ]; then \
+        sed -i "s#http://deb.debian.org#${mirror}#g; s#https://deb.debian.org#${mirror}#g" /etc/apt/sources.list; \
+      fi; \
+    fi \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends bash ca-certificates coreutils \
+ && rm -rf /var/lib/apt/lists/*
 WORKDIR /workspace
 CMD ["sleep", "infinity"]

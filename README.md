@@ -14,7 +14,7 @@ npm test
 npm start
 ```
 
-Then open http://127.0.0.1:8787 . Dev login is `owner` / `hearth-dev` unless `HEARTH_ADMIN_PASSWORD` is set.
+Then open http://127.0.0.1:8787 . Dev login is `owner` / `hearth-dev` unless `HEARTH_ADMIN_PASSWORD` is set. ICE servers, the UDP port range, and coturn are in [docs/voice.md](docs/voice.md).
 
 `node scripts/verify-voice-browser.mjs` signs in with headless Chrome at a phone-sized viewport and checks that the call reaches “通话中”.
 
@@ -54,9 +54,19 @@ sudo --preserve-env=DEEPSEEK_API_KEY bash -c 'curl -fsSL https://raw.githubuserc
 
 `--branch` is the same as `--ref` and is passed to `git clone --branch`. Re-running the script keeps `POSTGRES_PASSWORD`, `HEARTH_ADMIN_PASSWORD`, and `HEARTH_INTERNAL_TOKEN` already in `.env`. `--dry-run` prints the plan and writes nothing, including when it is not root. `--deepseek-key` remains optional.
 
-Mainland China (`--mirror cn` or `HEARTH_MIRROR=cn`): Docker CE is installed from `https://mirrors.aliyun.com/docker-ce` (`get.docker.com --mirror Aliyun` on Debian and RHEL 8+; yum on CentOS 7). npm in the image build uses `https://registry.npmmirror.com`. A Docker Hub accelerator is per-account: set `HEARTH_DOCKER_REGISTRY_MIRROR` to the URL from the Aliyun container registry console (镜像工具 → 镜像加速器). On an Aliyun VPC, set `HEARTH_DOCKER_MIRROR_BASE=http://mirrors.cloud.aliyuncs.com/docker-ce`. CentOS 7 without `--mirror cn` stops with a refusal, because `get.docker.com` no longer supports it and the host has yum rather than dnf.
+Mainland China (`--mirror cn` or `HEARTH_MIRROR=cn`): Docker CE is installed from `https://mirrors.aliyun.com/docker-ce` (`get.docker.com --mirror Aliyun` on Debian and RHEL 8+; yum on CentOS 7). The image build uses apt `https://mirrors.aliyun.com`, npm `https://registry.npmmirror.com`, the static Docker client from `https://mirrors.aliyun.com/docker-ce/linux/static/stable`, and base images from `mirror.ccs.tencentyun.com/` (`HEARTH_IMAGE_PREFIX`). Override the apt mirror with `HEARTH_APT_MIRROR` (`http://mirrors.tencentyun.com` on a Tencent VPC, or `https://mirrors.cloud.tencent.com`). A Docker Hub accelerator is per-account: set `HEARTH_DOCKER_REGISTRY_MIRROR` to the URL from the Aliyun container registry console (镜像工具 → 镜像加速器). On an Aliyun VPC, set `HEARTH_DOCKER_MIRROR_BASE=http://mirrors.cloud.aliyuncs.com/docker-ce`. CentOS 7 without `--mirror cn` stops with a refusal, because `get.docker.com` no longer supports it and the host has yum rather than dnf.
 
-The script installs Docker and the compose plugin, builds `hearth-sandbox:local`, and starts gateway, sentinel, and sandbox-manager as separate compose services under systemd. With `--domain`, Caddy terminates HTTPS. Backup and upgrade: `deploy/backup.sh`, `deploy/restore.sh`, `deploy/upgrade.sh`.
+Behind an existing reverse proxy (BaoTa nginx):
+
+```bash
+sudo --preserve-env=DEEPSEEK_API_KEY ./deploy/install.sh --proxy external --domain agent.example.com --http-port 8787
+```
+
+`--no-caddy` is the same as `--proxy external`. Caddy stays off, the gateway is published on `127.0.0.1:8787` (`HEARTH_HTTP_BIND` / `HEARTH_HTTP_PORT`), and `deploy/nginx/hearth.conf` is a sample vhost: `proxy_buffering off`, long read timeouts, WebSocket upgrade headers, and `/metrics` closed. Put those locations into the server block that already has TLS.
+
+The script installs Docker and the compose plugin, builds `hearth-sandbox:local`, and starts gateway, sentinel, and sandbox-manager as separate compose services under systemd. The manager image includes the Docker client. With `--domain` and the default proxy, Caddy terminates HTTPS. Backup and upgrade: `deploy/backup.sh`, `deploy/restore.sh`, `deploy/upgrade.sh`. `upgrade.sh` keeps `docker-compose.local.yml` when that file exists, plus any paths in `HEARTH_COMPOSE_FILES` (colon-separated).
+
+In-app voice needs UDP, not just the HTTPS proxy. Compose publishes UDP 50000–50199 and can add coturn with `--profile turn`. Set `HEARTH_ICE_PUBLIC_IP` to the public address. `stun.l.google.com` does not work from mainland China. Ports and the sample config are in [docs/voice.md](docs/voice.md) and [docs/voice.zh.md](docs/voice.zh.md).
 
 The sandbox manager bind-mounts `/var/lib/hearth/workspaces` (override with an absolute `HEARTH_WORKSPACE_ROOT`) at that same path. Per-user containers use that host path, so `sandbox_write` and `sandbox_exec` see the same files, owned by uid 65534.
 
