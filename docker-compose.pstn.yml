@@ -1,0 +1,13 @@
+# Enterprise PSTN override. The default compose file does not publish SIP or RTP.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.pstn.yml up -d
+#
+# Also set SIP_ENABLED=1 and PSTN_ENABLED=1, and give the tenant an enterprise
+# plan (or HEARTH_DEV_PSTN=1 for a local Aliyun trial). install.sh adds this
+# file to the systemd unit when SIP_ENABLED=1 is already in .env.
+# Signaling is UDP 5060. Media is UDP 10000–10199 unless SIP_RTP_PORT_MIN/MAX differ.
+services:
+  gateway:
+    ports:
+      - "${SIP_SIGNAL_PORT:-5060}:${SIP_SIGNAL_PORT:-5060}/udp"
+      - "${SIP_RTP_PORT_MIN:-10000}-${SIP_RTP_PORT_MAX:-10199}:${SIP_RTP_PORT_MIN:-10000}-${SIP_RTP_PORT_MAX:-10199}/udp"

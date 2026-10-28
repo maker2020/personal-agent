@@ -15,25 +15,34 @@ services:
     restart: unless-stopped
 
   sandbox:
-    build: .
+    build:
+      context: .
+      args:
+        NPM_REGISTRY: ${NPM_REGISTRY:-}
     command: ["node", "dist/packages/sandbox/src/main.js"]
     env_file: .env
     environment:
       HEARTH_ENV: production
       HEARTH_SANDBOX: docker
       HEARTH_SANDBOX_PORT: 8790
-      HEARTH_WORKSPACE_ROOT: /data/workspaces
+      # Same absolute path inside this container and on the host. The Docker
+      # socket resolves bind sources on the host, so a named volume here would
+      # hide sandbox_write from sandbox_exec.
+      HEARTH_WORKSPACE_ROOT: ${HEARTH_WORKSPACE_ROOT:-/var/lib/hearth/workspaces}
       DATABASE_URL: postgres://hearth:${POSTGRES_PASSWORD}@postgres:5432/hearth
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - hearth-workspaces:/data/workspaces
+      - ${HEARTH_WORKSPACE_ROOT:-/var/lib/hearth/workspaces}:${HEARTH_WORKSPACE_ROOT:-/var/lib/hearth/workspaces}
     depends_on:
       postgres:
         condition: service_healthy
     restart: unless-stopped
 
   gateway:
-    build: .
+    build:
+      context: .
+      args:
+        NPM_REGISTRY: ${NPM_REGISTRY:-}
     command: ["node", "dist/packages/gateway/src/main.js"]
     env_file: .env
     environment:
@@ -63,7 +72,10 @@ services:
     restart: unless-stopped
 
   sentinel:
-    build: .
+    build:
+      context: .
+      args:
+        NPM_REGISTRY: ${NPM_REGISTRY:-}
     command: ["node", "dist/packages/sentinel/src/main.js"]
     env_file: .env
     environment:
@@ -112,6 +124,5 @@ services:
 volumes:
   hearth-pg:
   hearth-data:
-  hearth-workspaces:
   caddy-data:
   caddy-config:

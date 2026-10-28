@@ -5,7 +5,10 @@ COPY package.json package-lock.json ./
 COPY packages ./packages
 COPY profiles ./profiles
 COPY tsconfig.json ./
-RUN npm ci && npm run build && npm prune --omit=dev
+# Empty keeps the default registry. install.sh --mirror cn sets https://registry.npmmirror.com.
+ARG NPM_REGISTRY=
+RUN if [ -n "$NPM_REGISTRY" ]; then npm config set registry "$NPM_REGISTRY"; fi \
+  && npm ci && npm run build && npm prune --omit=dev
 ENV NODE_ENV=production
 EXPOSE 8787
 ENTRYPOINT ["/usr/bin/tini", "--"]

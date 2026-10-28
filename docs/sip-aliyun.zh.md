@@ -28,3 +28,13 @@
 - 安全组：入方向 UDP 5060 和 RTP 段只放行阿里云给出的对端地址；出方向访问所选地域的 5060。拿到未掩码地址之前，不要对 `0.0.0.0/0` 长期开放 5060。中间 NAT 关掉 SIP ALG。
 
 呼入送号格式是区号加 7 到 8 位本地号码。自定义 SIP 码 470–477 的含义在同一篇帮助文档里（欠费、超频、黑名单、非法主叫、选路失败、配置错误）。
+
+## 本机端口怎么发布
+
+默认的 `docker-compose.yml` 不映射 5060 和 RTP，避免个人版把信令口暴露出去。企业版开通后：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.pstn.yml up -d
+```
+
+`docker-compose.pstn.yml` 把网关的 UDP 5060 和 UDP `SIP_RTP_PORT_MIN`–`SIP_RTP_PORT_MAX`（默认 10000–10199）发布到宿主机。同时设置 `SIP_ENABLED=1`、`PSTN_ENABLED=1`，并把租户套餐设为企业版；本地试用阿里云线路时用 `HEARTH_DEV_PSTN=1`。`SIP_ENABLED=1` 已经写在 `.env` 里时，`install.sh` 和 `deploy/upgrade.sh` 会自动加上这个覆盖文件。安全组仍然只放行阿里云对端地址。

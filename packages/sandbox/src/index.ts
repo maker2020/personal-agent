@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, chown, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Store } from "../../store/src/types.js";
 
@@ -13,6 +13,33 @@ export interface SandboxBackend {
 }
 
 const SAFE_ID = /^[A-Za-z0-9_-]{1,64}$/;
+export const SANDBOX_UID = 65534;
+export const SANDBOX_GID = 65534;
+
+/** Bind source the host Docker daemon must see. It is the same path the manager writes. */
+export function volumeBind(workspace: string): string {
+  return `${workspace}:/workspace`;
+}
+
+export function dockerRunArgs(input: { name: string; userId: string; workspace: string; image: string; runtime?: string }): string[] {
+  const args = ["docker", "run", "-d", "--name", input.name];
+  if (input.runtime) args.push("--runtime", input.runtime);
+  args.push(
+    "--label", `hearth.user=${input.userId}`,
+    "--network", "none",
+    "--cap-drop", "ALL",
+    "--security-opt", "no-new-privileges:true",
+    "--pids-limit", "64",
+    "--memory", "512m",
+    "--read-only",
+    "--tmpfs", "/tmp",
+    "--mount", `type=bind,source=${input.workspace},target=/workspace`,
+    "-w", "/workspace",
+    input.image,
+    "sleep", "infinity",
+  );
+  return args;
+}
 
 export function userWorkspace(root: string, userId: string): string {
   if (!SAFE_ID.test(userId)) throw new Error("unsafe user id");
@@ -50,29 +77,30 @@ export class DockerSandbox implements SandboxBackend {
   async ensure(userId: string): Promise<{ workspace: string; containerId: string }> {
     const workspace = userWorkspace(this.root, userId);
     await mkdir(workspace, { recursive: true });
-    await run(`chown 65534:65534 ${shellQuote(workspace)}`, workspace, 10000).catch(() => undefined);
+    await grantSandboxAccess(workspace, workspace);
     const name = `hearth-sbx-${userId}`;
-    await run(`docker inspect ${name}`, workspace, 10000).catch(() => undefined);
-    const inspect = await run(`docker inspect -f '{{.State.Running}}' ${name}`, workspace, 10000).catch(() => ({ code: 1, stdout: "", stderr: "" }));
-    if (inspect.code !== 0) {
-      const runtime = process.env.HEARTH_SANDBOX_RUNTIME ? `--runtime ${shellQuote(process.env.HEARTH_SANDBOX_RUNTIME)} ` : "";
-      await run(
-        `docker run -d --name ${name} ${runtime}--label hearth.user=${userId} --network none --cap-drop ALL --security-opt no-new-privileges:true --pids-limit 64 --memory 512m --read-only --tmpfs /tmp -v ${shellQuote(workspace)}:/workspace -w /workspace ${shellQuote(this.image)} sleep infinity`,
-        workspace,
-        30000,
-      );
+    if (!(await containerMountMatches(name, workspace))) {
+      await runArgv(["docker", "rm", "-f", name], workspace, 15000).catch(() => undefined);
+      const runtime = process.env.HEARTH_SANDBOX_RUNTIME;
+      const created = await runArgv(dockerRunArgs({ name, userId, workspace, image: this.image, ...(runtime ? { runtime } : {}) }), workspace, 30000);
+      if (created.code !== 0) throw new Error(`sandbox start failed: ${created.stderr || created.stdout}`);
     }
     return { workspace, containerId: name };
   }
   async exec(userId: string, command: string, timeoutMs: number): Promise<ExecResult> {
     const env = await this.ensure(userId);
-    return run(`docker exec -u 65534:65534 -w /workspace ${env.containerId} bash -lc ${shellQuote(command)}`, env.workspace, timeoutMs);
+    return runArgv(["docker", "exec", "-u", `${SANDBOX_UID}:${SANDBOX_GID}`, "-w", "/workspace", env.containerId, "bash", "-lc", command], env.workspace, timeoutMs);
   }
   async readFile(userId: string, file: string): Promise<string> {
     return new LocalSandbox(this.root).readFile(userId, file);
   }
   async writeFile(userId: string, file: string, content: string): Promise<void> {
-    await new LocalSandbox(this.root).writeFile(userId, file, content);
+    const workspace = userWorkspace(this.root, userId);
+    await mkdir(workspace, { recursive: true });
+    const target = safeFile(workspace, file);
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, content, { mode: 0o644 });
+    await grantSandboxAccess(workspace, target);
   }
 }
 
@@ -111,13 +139,50 @@ function safeFile(workspace: string, file: string): string {
   return target;
 }
 
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", `'\\''`)}'`;
+async function grantSandboxOwner(target: string, directory: boolean): Promise<void> {
+  try {
+    await chown(target, SANDBOX_UID, SANDBOX_GID);
+  } catch {
+    await chmod(target, directory ? 0o755 : 0o644).catch(() => undefined);
+  }
+}
+
+async function grantSandboxAccess(workspace: string, target: string): Promise<void> {
+  const chain = [workspace];
+  let current = workspace;
+  const rel = path.relative(workspace, target);
+  if (rel && rel !== ".") {
+    for (const part of rel.split(path.sep)) {
+      current = path.join(current, part);
+      chain.push(current);
+    }
+  }
+  for (const entry of chain) {
+    const info = await stat(entry);
+    await grantSandboxOwner(entry, info.isDirectory());
+  }
+}
+
+async function containerMountMatches(name: string, workspace: string): Promise<boolean> {
+  const inspect = await runArgv(["docker", "inspect", name], workspace, 10000, 200000);
+  if (inspect.code !== 0) return false;
+  try {
+    const parsed = JSON.parse(inspect.stdout) as Array<{ State?: { Running?: boolean }; Mounts?: Array<{ Destination?: string; Source?: string }> }>;
+    const info = parsed[0];
+    const mount = info?.Mounts?.find((item) => item.Destination === "/workspace");
+    return info?.State?.Running === true && mount?.Source === workspace;
+  } catch {
+    return false;
+  }
 }
 
 function run(command: string, cwd: string, timeoutMs: number, _env?: NodeJS.ProcessEnv): Promise<ExecResult> {
+  return runArgv(["bash", "-lc", command], cwd, timeoutMs);
+}
+
+function runArgv(args: string[], cwd: string, timeoutMs: number, max = 20000): Promise<ExecResult> {
   return new Promise((resolve) => {
-    const child = spawn("bash", ["-lc", command], {
+    const child = spawn(args[0] ?? "true", args.slice(1), {
       cwd,
       env: { PATH: process.env.PATH ?? "", HOME: cwd, LANG: "C.UTF-8" },
     });
@@ -130,7 +195,7 @@ function run(command: string, cwd: string, timeoutMs: number, _env?: NodeJS.Proc
     child.stderr.on("data", (chunk) => { stderr += chunk; });
     child.on("close", (code) => {
       clearTimeout(timer);
-      resolve({ stdout: stdout.slice(0, 20000), stderr: stderr.slice(0, 8000), code: code ?? 1 });
+      resolve({ stdout: stdout.slice(0, max), stderr: stderr.slice(0, 8000), code: code ?? 1 });
     });
   });
 }

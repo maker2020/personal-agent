@@ -34,18 +34,40 @@ npm start
 
 ## 部署
 
-Ubuntu、Debian 或 CentOS/RHEL 系：
+适用于 Ubuntu、Debian 或 CentOS/RHEL 8+。密钥从环境变量读取，也可以在终端里隐藏输入，不必写在命令行上。
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/maker2020/personal-agent/main/deploy/install.sh | sudo bash -s -- --deepseek-key "$DEEPSEEK_API_KEY" --domain agent.example.com
+sudo --preserve-env=DEEPSEEK_API_KEY bash -c 'curl -fsSL https://raw.githubusercontent.com/maker2020/personal-agent/main/deploy/install.sh | bash -s -- --domain agent.example.com'
 ```
 
 已经克隆仓库时：
 
 ```bash
-sudo ./deploy/install.sh --deepseek-key "$DEEPSEEK_API_KEY" --domain agent.example.com
+sudo --preserve-env=DEEPSEEK_API_KEY ./deploy/install.sh --domain agent.example.com
 ```
 
-脚本会安装 Docker 和 compose 插件，用随机的数据库密码、管理员密码和内部令牌写 `.env`，构建 `hearth-sandbox:local`，并用 systemd 拉起相互独立的网关、哨兵和沙箱管理器容器。带 `--domain` 时由 Caddy 做 HTTPS。备份和升级：`deploy/backup.sh`、`deploy/restore.sh`、`deploy/upgrade.sh`。
+合并到 `main` 之前，用分支上的脚本并加上 `--ref`：
+
+```bash
+sudo --preserve-env=DEEPSEEK_API_KEY bash -c 'curl -fsSL https://raw.githubusercontent.com/maker2020/personal-agent/cursor/hearth-personal-agent-23e9/deploy/install.sh | bash -s -- --ref cursor/hearth-personal-agent-23e9 --domain agent.example.com'
+```
+
+`--branch` 与 `--ref` 相同，会传给 `git clone --branch`。再次运行会保留 `.env` 里已有的 `POSTGRES_PASSWORD`、`HEARTH_ADMIN_PASSWORD` 和 `HEARTH_INTERNAL_TOKEN`。`--dry-run` 只打印计划，不写任何文件，也不需要 root。`--deepseek-key` 仍然可选。
+
+中国大陆服务器加 `--mirror cn`（或 `HEARTH_MIRROR=cn`）：Docker CE 从 `https://mirrors.aliyun.com/docker-ce` 安装（Debian 和 RHEL 8+ 走 `get.docker.com --mirror Aliyun`，CentOS 7 走 yum）。镜像构建里的 npm 使用 `https://registry.npmmirror.com`。Docker Hub 加速地址是账号自己的，到容器镜像服务控制台的「镜像工具 → 镜像加速器」复制，设到 `HEARTH_DOCKER_REGISTRY_MIRROR`。阿里云 VPC 内网可设 `HEARTH_DOCKER_MIRROR_BASE=http://mirrors.cloud.aliyuncs.com/docker-ce`。CentOS 7 不带 `--mirror cn` 时会直接拒绝：`get.docker.com` 已不再支持它，系统上也没有 dnf。
+
+脚本会安装 Docker 和 compose 插件，构建 `hearth-sandbox:local`，并用 systemd 拉起相互独立的网关、哨兵和沙箱管理器。带 `--domain` 时由 Caddy 做 HTTPS。备份和升级：`deploy/backup.sh`、`deploy/restore.sh`、`deploy/upgrade.sh`。
+
+沙箱管理器把 `/var/lib/hearth/workspaces`（也可用绝对路径 `HEARTH_WORKSPACE_ROOT`）以相同路径挂载进去。每个用户的容器使用这个宿主机路径，因此 `sandbox_write` 和 `sandbox_exec` 看到的是同一批文件，属主是 uid 65534。
+
+企业版真实电话只通过覆盖文件发布端口：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.pstn.yml up -d
+```
+
+这会映射 UDP 5060 和 UDP 10000–10199。同时设置 `SIP_ENABLED=1`、`PSTN_ENABLED=1`，并把套餐设为企业版（试用线路用 `HEARTH_DEV_PSTN=1`）。`.env` 里已经是 `SIP_ENABLED=1` 时，`install.sh` 和 `deploy/upgrade.sh` 会带上这个覆盖文件。
+
+邀请默认 `HEARTH_INVITE_TTL_HOURS`（168 小时）后过期。注册时在创建用户的同一事务里消费邀请。
 
 不用 Docker 的开发机：`npm install && npm test && npm start`，然后打开 http://127.0.0.1:8787（未设置管理员密码时是 `owner` / `hearth-dev`）。宿主机目录沙箱只允许开发模式。

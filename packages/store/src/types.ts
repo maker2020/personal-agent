@@ -140,7 +140,7 @@ export type SmsRecord = {
   createdAt: string;
 };
 
-export type Invite = { code: string; createdBy: string; createdAt: string; usedBy?: string };
+export type Invite = { code: string; createdBy: string; createdAt: string; expiresAt: string; usedBy?: string };
 
 export interface Store {
   migrate(): Promise<void>;
@@ -181,9 +181,10 @@ export interface Store {
   recordSms(input: Omit<SmsRecord, "id" | "createdAt"> & { id?: string }): Promise<SmsRecord>;
   updateSms(id: string, patch: Partial<Pick<SmsRecord, "status" | "detail" | "providerId">>): Promise<void>;
   listSms(userId: string): Promise<SmsRecord[]>;
-  createInvite(createdBy: string): Promise<Invite>;
+  createInvite(createdBy: string, expiresAt: string): Promise<Invite>;
   findInvite(code: string): Promise<Invite | null>;
-  consumeInvite(code: string, userId: string): Promise<boolean>;
+  /** Create the user and mark the invite used in one transaction. */
+  createUserFromInvite(input: { username: string; passwordHash: string; inviteCode: string; now?: Date }): Promise<{ ok: true; user: User } | { ok: false; error: "invite_required" | "expired" | "taken" }>;
   listUsers(): Promise<User[]>;
   setUserPlan(id: string, plan: User["plan"]): Promise<void>;
 }

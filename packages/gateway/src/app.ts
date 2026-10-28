@@ -171,12 +171,11 @@ export async function startHearth(env: NodeJS.ProcessEnv = process.env): Promise
     if (password.length < 8) return res.status(400).json({ error: "weak_password" });
     if (await store.findUserByUsername(username)) return res.status(409).json({ error: "taken" });
     const open = env.HEARTH_OPEN_SIGNUP === "1";
-    if (!open) {
-      const invite = await store.findInvite(inviteCode);
-      if (!invite || invite.usedBy) return res.status(403).json({ error: "invite_required" });
-    }
-    const user = await store.createUser({ username, passwordHash: await hashPassword(password), role: "member", plan: "personal" });
-    if (!open && !(await store.consumeInvite(inviteCode, user.id))) return res.status(403).json({ error: "invite_required" });
+    const created = open
+      ? { ok: true as const, user: await store.createUser({ username, passwordHash: await hashPassword(password), role: "member", plan: "personal" }) }
+      : await store.createUserFromInvite({ username, passwordHash: await hashPassword(password), inviteCode });
+    if (!created.ok) return res.status(403).json({ error: created.error });
+    const user = created.user;
     const token = newToken();
     const expires = new Date(Date.now() + config.sessionTtlHours * 3600_000).toISOString();
     await store.createAuthSession({ userId: user.id, tokenHash: hashToken(token), expiresAt: expires });
@@ -185,7 +184,9 @@ export async function startHearth(env: NodeJS.ProcessEnv = process.env): Promise
   router.add("POST", "/api/admin/invites", async (req, res) => {
     const user = await userFrom(req);
     if (!user || user.role !== "owner") return res.status(403).json({ error: "forbidden" });
-    res.json(await store.createInvite(user.id));
+    const hours = Number(env.HEARTH_INVITE_TTL_HOURS ?? 168);
+    const expiresAt = new Date(Date.now() + (Number.isFinite(hours) ? hours : 168) * 3600_000).toISOString();
+    res.json(await store.createInvite(user.id, expiresAt));
   });
   router.add("GET", "/api/admin/users", async (req, res) => {
     const user = await userFrom(req);

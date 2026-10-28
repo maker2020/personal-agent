@@ -10,11 +10,13 @@ A seam is a definition, a provider, and a consumer. dsh already has seams for th
 
 ## Decision
 
-Use the built-in DeepSeek adapter (`dsh-llm-deepseek-api-key`, `DEEPSEEK_API_KEY`) for the model. Register email, SMS, web fetch, schedule, memory, and sandbox tools on `ctx.tools`. Point workspace execution at one container per user through the sandbox manager, not at the host shell.
+The default interactive runner calls DeepSeek through `packages/llm` (`DeepSeekMessages`). That client posts to the Messages API (`/v1/messages` on `https://api.deepseek.com/anthropic`) with `x-api-key`, `anthropic-version: 2023-06-01`, and the same `DEEPSEEK_API_KEY` the harness uses. dsh's built-in adapter (`dsh-llm-deepseek-api-key`) is used only when `HEARTH_SPINE=dsh` runs a headless turn.
 
-## Why not a second model stack
+Email, SMS, web fetch, schedule, memory, and sandbox tools are implemented in `packages/tools`. The harness plugin registers those names on `ctx.tools` and forwards `execute` to `POST /internal/tools/invoke`, so both runners share one body. Workspace files and shell commands go through the sandbox manager, not the host shell.
 
-The key, base URL, and Messages shape already match the harness. A private client would drift from `dsh-llm-deepseek`.
+## Why the default path is not the built-in adapter
+
+Headless dsh does not stream tokens into the web client. A private Messages client keeps the key, base URL, and request shape aligned with `dsh-llm-deepseek` and can still stream. The adapter remains the spine used for `HEARTH_SPINE=dsh`.
 
 ## Consequences
 

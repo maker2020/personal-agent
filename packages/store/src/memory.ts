@@ -201,19 +201,24 @@ export class MemoryStore implements Store {
   async listSms(userId: string): Promise<SmsRecord[]> {
     return this.sms.filter((item) => item.userId === userId);
   }
-  async createInvite(createdBy: string): Promise<import("./types.js").Invite> {
-    const invite = { code: id("inv").replaceAll("-", "").slice(0, 22), createdBy, createdAt: new Date().toISOString() };
+  async createInvite(createdBy: string, expiresAt: string): Promise<import("./types.js").Invite> {
+    const invite = { code: id("inv").replaceAll("-", "").slice(0, 22), createdBy, createdAt: new Date().toISOString(), expiresAt };
     this.invites.push(invite);
     return invite;
   }
   async findInvite(code: string): Promise<import("./types.js").Invite | null> {
     return this.invites.find((item) => item.code === code) ?? null;
   }
-  async consumeInvite(code: string, userId: string): Promise<boolean> {
-    const invite = this.invites.find((item) => item.code === code && !item.usedBy);
-    if (!invite) return false;
-    invite.usedBy = userId;
-    return true;
+  async createUserFromInvite(input: { username: string; passwordHash: string; inviteCode: string; now?: Date }): Promise<{ ok: true; user: User } | { ok: false; error: "invite_required" | "expired" | "taken" }> {
+    const now = input.now ?? new Date();
+    if (this.users.some((user) => user.username === input.username)) return { ok: false, error: "taken" };
+    const invite = this.invites.find((item) => item.code === input.inviteCode);
+    if (!invite || invite.usedBy) return { ok: false, error: "invite_required" };
+    if (Date.parse(invite.expiresAt) <= now.getTime()) return { ok: false, error: "expired" };
+    const user: User = { id: id("usr"), username: input.username, passwordHash: input.passwordHash, role: "member", plan: "personal", createdAt: now.toISOString() };
+    this.users.push(user);
+    invite.usedBy = user.id;
+    return { ok: true, user };
   }
   async listUsers(): Promise<User[]> {
     return [...this.users];

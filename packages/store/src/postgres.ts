@@ -48,7 +48,10 @@ CREATE TABLE IF NOT EXISTS mail_cursors (
 CREATE TABLE IF NOT EXISTS telephony_state (
   id text PRIMARY KEY, document jsonb NOT NULL);
 CREATE TABLE IF NOT EXISTS invites (
-  code text PRIMARY KEY, created_by text NOT NULL, created_at timestamptz NOT NULL, used_by text);
+  code text PRIMARY KEY, created_by text NOT NULL, created_at timestamptz NOT NULL, expires_at timestamptz NOT NULL, used_by text);
+ALTER TABLE invites ADD COLUMN IF NOT EXISTS expires_at timestamptz;
+UPDATE invites SET expires_at = created_at + interval '7 days' WHERE expires_at IS NULL;
+ALTER TABLE invites ALTER COLUMN expires_at SET NOT NULL;
 CREATE TABLE IF NOT EXISTS sms_messages (
   id text PRIMARY KEY, user_id text NOT NULL, direction text NOT NULL, provider text NOT NULL,
   peer text NOT NULL, body text NOT NULL, template_code text, status text NOT NULL,
@@ -277,22 +280,57 @@ export class PostgresStore implements Store {
     const result = await this.pool.query("SELECT * FROM sms_messages WHERE user_id=$1 ORDER BY created_at DESC", [userId]);
     return result.rows.map(mapSms);
   }
-  async createInvite(createdBy: string): Promise<import("./types.js").Invite> {
-    const invite = { code: id("inv").replaceAll("-", "").slice(0, 22), createdBy, createdAt: new Date().toISOString() };
-    await this.pool.query("INSERT INTO invites (code, created_by, created_at) VALUES ($1,$2,$3)", [invite.code, invite.createdBy, invite.createdAt]);
+  async createInvite(createdBy: string, expiresAt: string): Promise<import("./types.js").Invite> {
+    const invite = { code: id("inv").replaceAll("-", "").slice(0, 22), createdBy, createdAt: new Date().toISOString(), expiresAt };
+    await this.pool.query("INSERT INTO invites (code, created_by, created_at, expires_at) VALUES ($1,$2,$3,$4)", [invite.code, invite.createdBy, invite.createdAt, invite.expiresAt]);
     return invite;
   }
   async findInvite(code: string): Promise<import("./types.js").Invite | null> {
     const result = await this.pool.query("SELECT * FROM invites WHERE code=$1", [code]);
     const row = result.rows[0] as Record<string, unknown> | undefined;
     if (!row) return null;
-    const invite: import("./types.js").Invite = { code: String(row.code), createdBy: String(row.created_by), createdAt: iso(row.created_at) };
+    const invite: import("./types.js").Invite = { code: String(row.code), createdBy: String(row.created_by), createdAt: iso(row.created_at), expiresAt: iso(row.expires_at) };
     if (row.used_by) invite.usedBy = String(row.used_by);
     return invite;
   }
-  async consumeInvite(code: string, userId: string): Promise<boolean> {
-    const result = await this.pool.query("UPDATE invites SET used_by=$2 WHERE code=$1 AND used_by IS NULL RETURNING code", [code, userId]);
-    return result.rowCount === 1;
+  async createUserFromInvite(input: { username: string; passwordHash: string; inviteCode: string; now?: Date }): Promise<{ ok: true; user: User } | { ok: false; error: "invite_required" | "expired" | "taken" }> {
+    const now = input.now ?? new Date();
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const existing = await client.query("SELECT 1 FROM users WHERE username=$1", [input.username]);
+      if (existing.rowCount) {
+        await client.query("ROLLBACK");
+        return { ok: false, error: "taken" };
+      }
+      const locked = await client.query("SELECT used_by, expires_at FROM invites WHERE code=$1 FOR UPDATE", [input.inviteCode]);
+      const row = locked.rows[0] as { used_by?: string | null; expires_at?: Date | string | null } | undefined;
+      if (!row || row.used_by) {
+        await client.query("ROLLBACK");
+        return { ok: false, error: "invite_required" };
+      }
+      if (!row.expires_at || new Date(row.expires_at).getTime() <= now.getTime()) {
+        await client.query("ROLLBACK");
+        return { ok: false, error: "expired" };
+      }
+      const user: User = { id: id("usr"), username: input.username, passwordHash: input.passwordHash, role: "member", plan: "personal", createdAt: now.toISOString() };
+      await client.query(
+        "INSERT INTO users (id, username, password_hash, role, plan, created_at) VALUES ($1,$2,$3,$4,$5,$6)",
+        [user.id, user.username, user.passwordHash, user.role, user.plan, user.createdAt],
+      );
+      const updated = await client.query("UPDATE invites SET used_by=$2 WHERE code=$1 AND used_by IS NULL", [input.inviteCode, user.id]);
+      if (updated.rowCount !== 1) {
+        await client.query("ROLLBACK");
+        return { ok: false, error: "invite_required" };
+      }
+      await client.query("COMMIT");
+      return { ok: true, user };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
   async listUsers(): Promise<User[]> {
     const result = await this.pool.query("SELECT * FROM users ORDER BY created_at ASC");

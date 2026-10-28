@@ -34,18 +34,40 @@ Architecture decisions, English and 中文: [composition](docs/adr/0001-composit
 
 ## Deploy
 
-On Ubuntu, Debian, or a CentOS/RHEL-family host:
+On Ubuntu, Debian, or a CentOS/RHEL 8+ host. The key is read from the environment (or a hidden prompt); it is not required on the command line.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/maker2020/personal-agent/main/deploy/install.sh | sudo bash -s -- --deepseek-key "$DEEPSEEK_API_KEY" --domain agent.example.com
+sudo --preserve-env=DEEPSEEK_API_KEY bash -c 'curl -fsSL https://raw.githubusercontent.com/maker2020/personal-agent/main/deploy/install.sh | bash -s -- --domain agent.example.com'
 ```
 
 From a checkout:
 
 ```bash
-sudo ./deploy/install.sh --deepseek-key "$DEEPSEEK_API_KEY" --domain agent.example.com
+sudo --preserve-env=DEEPSEEK_API_KEY ./deploy/install.sh --domain agent.example.com
 ```
 
-The script installs Docker and the compose plugin, writes `.env` with random `POSTGRES_PASSWORD`, admin password, and internal token, builds `hearth-sandbox:local`, and starts gateway, sentinel, and sandbox-manager as separate compose services under systemd. With `--domain`, Caddy terminates HTTPS. Backup and upgrade: `deploy/backup.sh`, `deploy/restore.sh`, `deploy/upgrade.sh`.
+Before this branch is merged, install that ref instead of `main`:
+
+```bash
+sudo --preserve-env=DEEPSEEK_API_KEY bash -c 'curl -fsSL https://raw.githubusercontent.com/maker2020/personal-agent/cursor/hearth-personal-agent-23e9/deploy/install.sh | bash -s -- --ref cursor/hearth-personal-agent-23e9 --domain agent.example.com'
+```
+
+`--branch` is the same as `--ref` and is passed to `git clone --branch`. Re-running the script keeps `POSTGRES_PASSWORD`, `HEARTH_ADMIN_PASSWORD`, and `HEARTH_INTERNAL_TOKEN` already in `.env`. `--dry-run` prints the plan and writes nothing, including when it is not root. `--deepseek-key` remains optional.
+
+Mainland China (`--mirror cn` or `HEARTH_MIRROR=cn`): Docker CE is installed from `https://mirrors.aliyun.com/docker-ce` (`get.docker.com --mirror Aliyun` on Debian and RHEL 8+; yum on CentOS 7). npm in the image build uses `https://registry.npmmirror.com`. A Docker Hub accelerator is per-account: set `HEARTH_DOCKER_REGISTRY_MIRROR` to the URL from the Aliyun container registry console (镜像工具 → 镜像加速器). On an Aliyun VPC, set `HEARTH_DOCKER_MIRROR_BASE=http://mirrors.cloud.aliyuncs.com/docker-ce`. CentOS 7 without `--mirror cn` stops with a refusal, because `get.docker.com` no longer supports it and the host has yum rather than dnf.
+
+The script installs Docker and the compose plugin, builds `hearth-sandbox:local`, and starts gateway, sentinel, and sandbox-manager as separate compose services under systemd. With `--domain`, Caddy terminates HTTPS. Backup and upgrade: `deploy/backup.sh`, `deploy/restore.sh`, `deploy/upgrade.sh`.
+
+The sandbox manager bind-mounts `/var/lib/hearth/workspaces` (override with an absolute `HEARTH_WORKSPACE_ROOT`) at that same path. Per-user containers use that host path, so `sandbox_write` and `sandbox_exec` see the same files, owned by uid 65534.
+
+Enterprise PSTN publishes signaling and media only through the override:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.pstn.yml up -d
+```
+
+That maps UDP 5060 and UDP 10000–10199. Set `SIP_ENABLED=1`, `PSTN_ENABLED=1`, and an enterprise plan (or `HEARTH_DEV_PSTN=1` for a trial). When `SIP_ENABLED=1` is already in `.env`, `install.sh` and `deploy/upgrade.sh` include the override.
+
+Invites expire after `HEARTH_INVITE_TTL_HOURS` (default 168). Signup consumes the invite in the same transaction as user creation.
 
 Dev without Docker: `npm install && npm test && npm start`, then http://127.0.0.1:8787 (`owner` / `hearth-dev` if no admin password is set). The host-folder sandbox is dev-only.

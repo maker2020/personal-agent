@@ -36,4 +36,4 @@ router.add("POST", "/internal/sandbox/write", async (req, res) => {
 });
 const port = Number(process.env.HEARTH_SANDBOX_PORT ?? 8790);
 const bound = await listen(router, "0.0.0.0", port);
-logger.info("sandbox manager listening", { port: bound.port });
+logger.info("sandbox manager listening", { port: bound.port, workspaceRoot: config.sandbox.workspaceRoot });

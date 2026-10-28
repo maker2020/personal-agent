@@ -24,6 +24,7 @@
 ## 后果
 
 - 沙箱扩容时不必给每个容器开放 UDP 5060。
+- 默认 compose 不发布 SIP 和 RTP。企业版真实电话用 `docker compose -f docker-compose.yml -f docker-compose.pstn.yml up -d` 补上 UDP 5060 和 UDP 10000–10199（或 `SIP_SIGNAL_PORT` / `SIP_RTP_PORT_MIN` / `SIP_RTP_PORT_MAX`）。`.env` 里 `SIP_ENABLED=1` 时，`install.sh` 和 `deploy/upgrade.sh` 会带上这个覆盖文件。
 - 增加中继容量或号码只改网关配置。
 - 核心产品可以在没有阿里云号码的情况下交付和测试。
 - 用户以后可以用同一个 WebRTC 对端加入助手正在进行的真实电话；接管发生在网关，不在沙箱里。

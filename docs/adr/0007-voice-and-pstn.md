@@ -24,6 +24,7 @@ A SIP user agent inside the sandbox would put trunk credentials next to untruste
 ## Consequences
 
 - Sandboxes can scale without opening UDP 5060 on every container.
+- The default compose file does not publish SIP or RTP. Enterprise PSTN adds them with `docker compose -f docker-compose.yml -f docker-compose.pstn.yml up -d` (UDP 5060 and UDP 10000–10199, or `SIP_SIGNAL_PORT` / `SIP_RTP_PORT_MIN` / `SIP_RTP_PORT_MAX`). `install.sh` and `deploy/upgrade.sh` include that override when `.env` has `SIP_ENABLED=1`.
 - Adding trunk capacity or DIDs is configuration on the gateway.
 - The core product can ship and be tested without an Aliyun number.
 - A human can later join a PSTN call with the same WebRTC peer; that takeover sits on the gateway, not in the sandbox.
