@@ -17,7 +17,7 @@ export async function verifyDsh(): Promise<void> {
   if (!dumped.stdout.includes("hearth-tools")) throw new Error(`dump-config missing hearth-tools\n${dumped.stderr}`);
   const env: NodeJS.ProcessEnv = { ...process.env, DSH_HOME: home };
   delete env.DEEPSEEK_API_KEY;
-  const booted = await run(process.execPath, [dshBin(), "--profile", "headless", "--patch", patch, "--", "say hi"], env, root);
+  const booted = await run(process.execPath, [dshBin(), "--profile", "headless", "--patch", patch, "--", "say hi"], env, root, ["DEEPSEEK_API_KEY"]);
   const combined = `${booted.stdout}\n${booted.stderr}`;
   if (!combined.includes("hearth-plugin-ready")) throw new Error(`plugin did not apply\n${combined}`);
   if (!combined.includes("MISSING_CREDENTIAL")) throw new Error(`expected missing-credential stop without a key\n${combined}`);

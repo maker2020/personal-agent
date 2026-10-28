@@ -15,6 +15,7 @@ export type MailMessage = {
 export interface Mailbox {
   list(sinceUid: number): Promise<MailMessage[]>;
   send(input: { to: string; subject: string; text: string }): Promise<void>;
+  watch?(onMessage: (message: MailMessage) => void, signal: AbortSignal): Promise<void>;
 }
 
 export class MemoryMailbox implements Mailbox {
@@ -88,9 +89,37 @@ export class ImapSmtpMailbox implements Mailbox {
       secure: this.options.smtpSecure,
       auth: this.options.accessToken
         ? { type: "OAuth2", user: this.options.user, accessToken: this.options.accessToken }
-        : { user: this.options.user, pass: this.options.password },
+        : this.options.password ? { user: this.options.user, pass: this.options.password } : undefined,
     });
     await transport.sendMail({ from: this.options.from, to: input.to, subject: input.subject, text: input.text });
+  }
+
+  async watch(onMessage: (message: MailMessage) => void, signal: AbortSignal): Promise<void> {
+    const { ImapFlow } = require("imapflow") as { ImapFlow: new (opts: unknown) => ImapClient & { idle: () => Promise<void>; on: (event: string, cb: (info: { count?: number }) => void) => void; mailboxOpen: (box: string) => Promise<unknown> } };
+    const client = new ImapFlow({
+      host: this.options.host,
+      port: this.options.port,
+      secure: this.options.secure,
+      auth: this.options.accessToken
+        ? { user: this.options.user, accessToken: this.options.accessToken }
+        : { user: this.options.user, pass: this.options.password },
+      logger: false,
+    });
+    await client.connect();
+    await client.mailboxOpen(this.options.mailbox);
+    let since = 0;
+    const deliver = async () => {
+      const fresh = await this.list(since);
+      for (const message of fresh) {
+        since = Math.max(since, message.uid);
+        onMessage(message);
+      }
+    };
+    client.on("exists", () => { void deliver(); });
+    while (!signal.aborted) {
+      await client.idle();
+    }
+    await client.logout();
   }
 }
 

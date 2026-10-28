@@ -32,11 +32,18 @@ function render() {
 }
 
 function login() {
-  $("app").innerHTML = `<form class="card" id="form"><label>${t("user")}</label><input name="username" autocomplete="username" /><label>${t("password")}</label><input name="password" type="password" autocomplete="current-password" /><button type="submit">${t("login")}</button></form>`;
+  $("app").innerHTML = `<form class="card" id="form"><label>${t("user")}</label><input name="username" autocomplete="username" /><label>${t("password")}</label><input name="password" type="password" autocomplete="current-password" /><label>${state.lang === "zh" ? "邀请码（注册时填写）" : "Invite code (signup)"}</label><input name="invite" /><button type="submit">${t("login")}</button><button type="button" id="signup">${state.lang === "zh" ? "注册" : "Sign up"}</button></form>`;
   $("form").onsubmit = async (event) => {
     event.preventDefault();
     const data = new FormData(event.target);
     const body = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ username: data.get("username"), password: data.get("password") }) });
+    state.token = body.token;
+    localStorage.setItem("hearth.token", body.token);
+    render();
+  };
+  $("signup").onclick = async () => {
+    const data = new FormData($("form"));
+    const body = await api("/api/auth/signup", { method: "POST", body: JSON.stringify({ username: data.get("username"), password: data.get("password"), invite: data.get("invite") }) });
     state.token = body.token;
     localStorage.setItem("hearth.token", body.token);
     render();

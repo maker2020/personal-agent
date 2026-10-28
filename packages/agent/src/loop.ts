@@ -47,6 +47,7 @@ export async function runTurn(input: {
     finalText = text;
   }
   await input.store.touchConversation(input.conversationId);
+  await input.host.memory.remember(input.conversationId, finalText.slice(0, 2000));
   return { text: finalText };
 }
 

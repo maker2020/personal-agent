@@ -50,17 +50,23 @@ export class DockerSandbox implements SandboxBackend {
   async ensure(userId: string): Promise<{ workspace: string; containerId: string }> {
     const workspace = userWorkspace(this.root, userId);
     await mkdir(workspace, { recursive: true });
+    await run(`chown 65534:65534 ${shellQuote(workspace)}`, workspace, 10000).catch(() => undefined);
     const name = `hearth-sbx-${userId}`;
     await run(`docker inspect ${name}`, workspace, 10000).catch(() => undefined);
     const inspect = await run(`docker inspect -f '{{.State.Running}}' ${name}`, workspace, 10000).catch(() => ({ code: 1, stdout: "", stderr: "" }));
     if (inspect.code !== 0) {
-      await run(`docker run -d --name ${name} --label hearth.user=${userId} -v ${shellQuote(workspace)}:/workspace -w /workspace --network none ${shellQuote(this.image)} sleep infinity`, workspace, 30000);
+      const runtime = process.env.HEARTH_SANDBOX_RUNTIME ? `--runtime ${shellQuote(process.env.HEARTH_SANDBOX_RUNTIME)} ` : "";
+      await run(
+        `docker run -d --name ${name} ${runtime}--label hearth.user=${userId} --network none --cap-drop ALL --security-opt no-new-privileges:true --pids-limit 64 --memory 512m --read-only --tmpfs /tmp -v ${shellQuote(workspace)}:/workspace -w /workspace ${shellQuote(this.image)} sleep infinity`,
+        workspace,
+        30000,
+      );
     }
     return { workspace, containerId: name };
   }
   async exec(userId: string, command: string, timeoutMs: number): Promise<ExecResult> {
     const env = await this.ensure(userId);
-    return run(`docker exec -w /workspace ${env.containerId} bash -lc ${shellQuote(command)}`, env.workspace, timeoutMs);
+    return run(`docker exec -u 65534:65534 -w /workspace ${env.containerId} bash -lc ${shellQuote(command)}`, env.workspace, timeoutMs);
   }
   async readFile(userId: string, file: string): Promise<string> {
     return new LocalSandbox(this.root).readFile(userId, file);
@@ -127,4 +133,38 @@ function run(command: string, cwd: string, timeoutMs: number, _env?: NodeJS.Proc
       resolve({ stdout: stdout.slice(0, 20000), stderr: stderr.slice(0, 8000), code: code ?? 1 });
     });
   });
+}
+
+export class RemoteSandbox implements SandboxBackend {
+  constructor(private url: string, private token: string) {}
+  private async call<T>(pathName: string, body: unknown): Promise<T> {
+    const response = await fetch(`${this.url.replace(/\/$/, "")}${pathName}`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${this.token}`, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) throw new Error(`sandbox manager ${response.status}`);
+    return await response.json() as T;
+  }
+  ensure(userId: string): Promise<{ workspace: string; containerId?: string }> {
+    return this.call("/internal/sandbox/ensure", { userId });
+  }
+  exec(userId: string, command: string, timeoutMs: number): Promise<ExecResult> {
+    return this.call("/internal/sandbox/exec", { userId, command, timeoutMs });
+  }
+  readFile(userId: string, file: string): Promise<string> {
+    return this.call<{ content: string }>("/internal/sandbox/read", { userId, path: file }).then((body) => body.content);
+  }
+  writeFile(userId: string, file: string, content: string): Promise<void> {
+    return this.call("/internal/sandbox/write", { userId, path: file, content }).then(() => undefined);
+  }
+}
+
+export function selectSandbox(input: { env: string; backend: "local" | "docker"; root: string; image: string; url?: string; token: string }): SandboxBackend {
+  if (input.env === "production" && input.backend === "local" && !input.url) {
+    throw new Error("LocalSandbox is dev-only and cannot run when HEARTH_ENV=production");
+  }
+  if (input.url) return new RemoteSandbox(input.url, input.token);
+  if (input.backend === "docker") return new DockerSandbox(input.root, input.image);
+  return new LocalSandbox(input.root);
 }

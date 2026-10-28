@@ -26,6 +26,7 @@ export class MemoryStore implements Store {
   nodes: SandboxNode[] = [];
   cursors: MailCursor[] = [];
   sms: SmsRecord[] = [];
+  invites: import("./types.js").Invite[] = [];
   telephony: import("./types.js").TelephonyState = { dids: [], routes: [], blocks: [], usages: [] };
 
   async migrate(): Promise<void> {}
@@ -199,5 +200,26 @@ export class MemoryStore implements Store {
   }
   async listSms(userId: string): Promise<SmsRecord[]> {
     return this.sms.filter((item) => item.userId === userId);
+  }
+  async createInvite(createdBy: string): Promise<import("./types.js").Invite> {
+    const invite = { code: id("inv").replaceAll("-", "").slice(0, 22), createdBy, createdAt: new Date().toISOString() };
+    this.invites.push(invite);
+    return invite;
+  }
+  async findInvite(code: string): Promise<import("./types.js").Invite | null> {
+    return this.invites.find((item) => item.code === code) ?? null;
+  }
+  async consumeInvite(code: string, userId: string): Promise<boolean> {
+    const invite = this.invites.find((item) => item.code === code && !item.usedBy);
+    if (!invite) return false;
+    invite.usedBy = userId;
+    return true;
+  }
+  async listUsers(): Promise<User[]> {
+    return [...this.users];
+  }
+  async setUserPlan(userId: string, plan: User["plan"]): Promise<void> {
+    const user = this.users.find((item) => item.id === userId);
+    if (user) user.plan = plan;
   }
 }

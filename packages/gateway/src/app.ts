@@ -4,7 +4,7 @@ import { hashPassword, hashToken, loadConfig, newToken, verifyPassword, createLo
 import { openStore, type Store } from "../../store/src/index.js";
 import { ImapSmtpMailbox, MemoryMailbox, gmailAccessToken, type Mailbox } from "../../email/src/index.js";
 import { AliyunSmsChannel, AndroidSmsGatewayChannel, MemorySmsChannel, TwilioSmsChannel, parseAliyunSmsReport, parseAliyunSmsUp, parseAndroidInbound, parseTwilioInbound, verifyTwilioSignature, ALIYUN_SMS_HTTP_ACK, type SmsChannel } from "../../sms/src/index.js";
-import { LocalSandbox, DockerSandbox, PlacementRouter } from "../../sandbox/src/index.js";
+import { PlacementRouter, selectSandbox } from "../../sandbox/src/index.js";
 import { TaskMemory, createCheckpointer } from "../../memory/src/index.js";
 import { DeepSeekMessages, MockLlm, type LlmClient } from "../../llm/src/index.js";
 import { invokeTool, type ToolHost } from "../../tools/src/registry.js";
@@ -23,7 +23,14 @@ export async function startHearth(env: NodeJS.ProcessEnv = process.env): Promise
   await store.migrate();
   const owner = await ensureAdmin(store, config);
   const memory = new TaskMemory(await createCheckpointer(config.databaseUrl));
-  const backend = config.sandbox.backend === "docker" ? new DockerSandbox(config.sandbox.workspaceRoot, config.sandbox.dockerImage) : new LocalSandbox(config.sandbox.workspaceRoot);
+  const backend = selectSandbox({
+    env: config.env,
+    backend: config.sandbox.backend,
+    root: config.sandbox.workspaceRoot,
+    image: config.sandbox.dockerImage,
+    url: config.sandbox.url,
+    token: config.internalToken,
+  });
   const sandbox = new PlacementRouter(store, config.sandbox.nodeId, backend, config.sandbox.advertiseUrl);
   const mailbox = await buildMailbox(config, env);
   const sms = buildSms(config, env);
@@ -153,6 +160,45 @@ export async function startHearth(env: NodeJS.ProcessEnv = process.env): Promise
     const token = sessionToken(req);
     if (token) await store.deleteAuthSession(hashToken(token));
     res.raw.setHeader("set-cookie", "hearth_session=; HttpOnly; Path=/; Max-Age=0");
+    res.json({ ok: true });
+  });
+  router.add("POST", "/api/auth/signup", async (req, res) => {
+    const body = record(req.body);
+    const username = String(body.username ?? "");
+    const password = String(body.password ?? "");
+    const inviteCode = String(body.invite ?? "");
+    if (!/^[A-Za-z0-9_-]{3,32}$/.test(username)) return res.status(400).json({ error: "bad_username" });
+    if (password.length < 8) return res.status(400).json({ error: "weak_password" });
+    if (await store.findUserByUsername(username)) return res.status(409).json({ error: "taken" });
+    const open = env.HEARTH_OPEN_SIGNUP === "1";
+    if (!open) {
+      const invite = await store.findInvite(inviteCode);
+      if (!invite || invite.usedBy) return res.status(403).json({ error: "invite_required" });
+    }
+    const user = await store.createUser({ username, passwordHash: await hashPassword(password), role: "member", plan: "personal" });
+    if (!open && !(await store.consumeInvite(inviteCode, user.id))) return res.status(403).json({ error: "invite_required" });
+    const token = newToken();
+    const expires = new Date(Date.now() + config.sessionTtlHours * 3600_000).toISOString();
+    await store.createAuthSession({ userId: user.id, tokenHash: hashToken(token), expiresAt: expires });
+    res.json({ token, user: { id: user.id, username: user.username, role: user.role, plan: user.plan } });
+  });
+  router.add("POST", "/api/admin/invites", async (req, res) => {
+    const user = await userFrom(req);
+    if (!user || user.role !== "owner") return res.status(403).json({ error: "forbidden" });
+    res.json(await store.createInvite(user.id));
+  });
+  router.add("GET", "/api/admin/users", async (req, res) => {
+    const user = await userFrom(req);
+    if (!user || user.role !== "owner") return res.status(403).json({ error: "forbidden" });
+    const users = await store.listUsers();
+    res.json({ users: users.map((item) => ({ id: item.id, username: item.username, role: item.role, plan: item.plan })) });
+  });
+  router.add("POST", "/api/admin/users/:id", async (req, res) => {
+    const user = await userFrom(req);
+    if (!user || user.role !== "owner") return res.status(403).json({ error: "forbidden" });
+    const plan = String(record(req.body).plan ?? "");
+    if (plan !== "personal" && plan !== "enterprise") return res.status(400).json({ error: "bad_plan" });
+    await store.setUserPlan(req.params.id ?? "", plan);
     res.json({ ok: true });
   });
   router.add("GET", "/api/me", async (req, res) => {
@@ -360,7 +406,7 @@ export async function startHearth(env: NodeJS.ProcessEnv = process.env): Promise
   const port = config.roles.has("gateway") ? config.gatewayPort : config.roles.has("agent") ? config.agentPort : config.sentinelPort;
   const bound = await listen(router, config.gatewayHost, port);
   let timer: NodeJS.Timeout | undefined;
-  if (config.roles.has("sentinel")) {
+  if (config.roles.has("sentinel") && env.HEARTH_SENTINEL_EXTERNAL !== "1") {
     const tick = () => {
       sentinelTick({ config, store, mailbox, ownerId: owner.id, wake }).catch((error: unknown) => {
         logger.error("sentinel tick", { error: error instanceof Error ? error.message : "failed" });

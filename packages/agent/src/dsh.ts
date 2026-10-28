@@ -17,9 +17,11 @@ export async function dshVersion(): Promise<string> {
   return result.stdout.trim();
 }
 
-export function run(command: string, args: string[], env: NodeJS.ProcessEnv, cwd = process.cwd()): Promise<{ stdout: string; stderr: string; code: number }> {
+export function run(command: string, args: string[], env: NodeJS.ProcessEnv, cwd = process.cwd(), unset: string[] = []): Promise<{ stdout: string; stderr: string; code: number }> {
+  const merged: NodeJS.ProcessEnv = { ...process.env, ...env };
+  for (const key of unset) delete merged[key];
   return new Promise((resolve) => {
-    const child = spawn(command, args, { cwd, env: { ...process.env, ...env } });
+    const child = spawn(command, args, { cwd, env: merged });
     let stdout = "";
     let stderr = "";
     child.stdout.setEncoding("utf8");

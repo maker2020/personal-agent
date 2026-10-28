@@ -140,6 +140,8 @@ export type SmsRecord = {
   createdAt: string;
 };
 
+export type Invite = { code: string; createdBy: string; createdAt: string; usedBy?: string };
+
 export interface Store {
   migrate(): Promise<void>;
   close(): Promise<void>;
@@ -179,4 +181,9 @@ export interface Store {
   recordSms(input: Omit<SmsRecord, "id" | "createdAt"> & { id?: string }): Promise<SmsRecord>;
   updateSms(id: string, patch: Partial<Pick<SmsRecord, "status" | "detail" | "providerId">>): Promise<void>;
   listSms(userId: string): Promise<SmsRecord[]>;
+  createInvite(createdBy: string): Promise<Invite>;
+  findInvite(code: string): Promise<Invite | null>;
+  consumeInvite(code: string, userId: string): Promise<boolean>;
+  listUsers(): Promise<User[]>;
+  setUserPlan(id: string, plan: User["plan"]): Promise<void>;
 }

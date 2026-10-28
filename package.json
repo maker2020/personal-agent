@@ -42,8 +42,11 @@
     "@types/pg": "8.15.6",
     "@types/ws": "8.18.1",
     "eslint": "9.39.1",
-    "puppeteer-core": "^24.15.0",
     "typescript": "5.9.3",
     "typescript-eslint": "8.46.2"
+  },
+  "overrides": {
+    "undici": "8.12.3",
+    "zod": "4.6.7"
   }
 }

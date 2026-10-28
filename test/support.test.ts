@@ -27,9 +27,11 @@ test("daily schedule moves to the next day when the hour has passed", () => {
   assert.equal(next.getDate(), 29);
 });
 
-test("langgraph memory recalls a note", async () => {
-  const memory = new TaskMemory(await createCheckpointer());
-  await memory.remember("thread-1", "buy milk");
-  const notes = await memory.recall("thread-1");
-  assert.equal(notes.at(-1)?.text, "buy milk");
+test("a new memory graph resumes notes from the same checkpointer", async () => {
+  const saver = await createCheckpointer();
+  const first = new TaskMemory(saver);
+  await first.remember("conversation-1", "resume-me");
+  const second = new TaskMemory(saver);
+  const notes = await second.recall("conversation-1");
+  assert.equal(notes.at(-1)?.text, "resume-me");
 });

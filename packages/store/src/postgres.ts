@@ -47,6 +47,8 @@ CREATE TABLE IF NOT EXISTS mail_cursors (
   user_id text NOT NULL, mailbox text NOT NULL, uid bigint NOT NULL, PRIMARY KEY (user_id, mailbox));
 CREATE TABLE IF NOT EXISTS telephony_state (
   id text PRIMARY KEY, document jsonb NOT NULL);
+CREATE TABLE IF NOT EXISTS invites (
+  code text PRIMARY KEY, created_by text NOT NULL, created_at timestamptz NOT NULL, used_by text);
 CREATE TABLE IF NOT EXISTS sms_messages (
   id text PRIMARY KEY, user_id text NOT NULL, direction text NOT NULL, provider text NOT NULL,
   peer text NOT NULL, body text NOT NULL, template_code text, status text NOT NULL,
@@ -274,6 +276,30 @@ export class PostgresStore implements Store {
   async listSms(userId: string): Promise<SmsRecord[]> {
     const result = await this.pool.query("SELECT * FROM sms_messages WHERE user_id=$1 ORDER BY created_at DESC", [userId]);
     return result.rows.map(mapSms);
+  }
+  async createInvite(createdBy: string): Promise<import("./types.js").Invite> {
+    const invite = { code: id("inv").replaceAll("-", "").slice(0, 22), createdBy, createdAt: new Date().toISOString() };
+    await this.pool.query("INSERT INTO invites (code, created_by, created_at) VALUES ($1,$2,$3)", [invite.code, invite.createdBy, invite.createdAt]);
+    return invite;
+  }
+  async findInvite(code: string): Promise<import("./types.js").Invite | null> {
+    const result = await this.pool.query("SELECT * FROM invites WHERE code=$1", [code]);
+    const row = result.rows[0] as Record<string, unknown> | undefined;
+    if (!row) return null;
+    const invite: import("./types.js").Invite = { code: String(row.code), createdBy: String(row.created_by), createdAt: iso(row.created_at) };
+    if (row.used_by) invite.usedBy = String(row.used_by);
+    return invite;
+  }
+  async consumeInvite(code: string, userId: string): Promise<boolean> {
+    const result = await this.pool.query("UPDATE invites SET used_by=$2 WHERE code=$1 AND used_by IS NULL RETURNING code", [code, userId]);
+    return result.rowCount === 1;
+  }
+  async listUsers(): Promise<User[]> {
+    const result = await this.pool.query("SELECT * FROM users ORDER BY created_at ASC");
+    return result.rows.map((row) => mapUser(row as Record<string, unknown>)).filter((user): user is User => user !== null);
+  }
+  async setUserPlan(userId: string, plan: User["plan"]): Promise<void> {
+    await this.pool.query("UPDATE users SET plan=$2 WHERE id=$1", [userId, plan]);
   }
 }
 

@@ -1,2 +1,6 @@
-process.env.HEARTH_ROLES = process.env.HEARTH_ROLES ?? "sentinel";
-await import("../../gateway/src/main.js");
+import { startSentinel } from "./service.js";
+
+startSentinel().catch((error: unknown) => {
+  console.error(JSON.stringify({ level: "error", msg: "sentinel failed", error: error instanceof Error ? error.message : "failed" }));
+  process.exit(1);
+});

@@ -13,6 +13,7 @@ export async function sentinelTick(input: {
   ownerId?: string;
   wake: (userId: string, reason: string, text: string) => Promise<void>;
   now?: Date;
+  skipEmail?: boolean;
 }): Promise<{ routines: number; emails: number; sms: number }> {
   const now = input.now ?? new Date();
   let routines = 0;
@@ -23,7 +24,7 @@ export async function sentinelTick(input: {
     await input.wake(routine.userId, "routine", routine.prompt);
     await input.store.markRoutineRan(routine.id, now.toISOString(), nextRun(routine.schedule, now).toISOString());
   }
-  if (input.mailbox && input.ownerId) {
+  if (input.mailbox && input.ownerId && !input.skipEmail) {
     const since = await input.store.getMailCursor(input.ownerId, input.config.email.mailbox);
     const messages = await input.mailbox.list(since);
     let maxUid = since;

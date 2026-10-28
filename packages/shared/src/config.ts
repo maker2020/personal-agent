@@ -89,6 +89,7 @@ export type AppConfig = {
     workspaceRoot: string;
     dockerImage: string;
     advertiseUrl: string;
+    url?: string;
   };
   sentinel: { pollMs: number };
   webAllowPrivate: boolean;
@@ -226,11 +227,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       },
     },
     sandbox: {
-      backend: env.HEARTH_SANDBOX === "docker" ? "docker" : "local",
+      backend: (() => {
+        const production = (env.HEARTH_ENV ?? env.NODE_ENV) === "production";
+        if (env.HEARTH_SANDBOX === "docker" || env.HEARTH_SANDBOX === "local") return env.HEARTH_SANDBOX;
+        return production ? "docker" : "local";
+      })(),
       nodeId: env.HEARTH_NODE_ID ?? "local",
       workspaceRoot: env.HEARTH_WORKSPACE_ROOT ?? "./data/workspaces",
       dockerImage: env.HEARTH_SANDBOX_IMAGE ?? "hearth-sandbox:local",
       advertiseUrl: env.HEARTH_NODE_ADVERTISE_URL ?? `http://${agentHost}:${agentPort}`,
+      url: env.HEARTH_SANDBOX_URL || undefined,
     },
     sentinel: { pollMs: num(env.HEARTH_SENTINEL_POLL_MS, 15000) },
     webAllowPrivate: bool(env.WEB_ALLOW_PRIVATE, false),

@@ -26,7 +26,7 @@ Then open http://127.0.0.1:8787 . Dev login is `owner` / `hearth-dev` unless `HE
 | PSTN via the shared Aliyun trunk | off | `PSTN_ENABLED=1` |
 | SMS | off | `SMS_ENABLED=1` |
 
-Local trial without changing the plan: `HEARTH_DEV_PSTN=1` or `HEARTH_DEV_SMS=1`, plus `SIP_ENABLED=1` and the Aliyun profile in `.env.example`. Architecture: [docs/adr/0007-voice-and-pstn.md](docs/adr/0007-voice-and-pstn.md) and [中文](docs/adr/0007-voice-and-pstn.zh.md).
+Architecture decisions, English and 中文: [composition](docs/adr/0001-composition.md), [spine](docs/adr/0002-spine.md), [capability](docs/adr/0003-capability.md), [control](docs/adr/0004-control.md), [truth and LangGraph](docs/adr/0005-truth.md), [surface](docs/adr/0006-surface.md), [voice and PSTN](docs/adr/0007-voice-and-pstn.md). Audit notes: [docs/audit.md](docs/audit.md).
 
 ## Live model check
 
@@ -34,9 +34,18 @@ Local trial without changing the plan: `HEARTH_DEV_PSTN=1` or `HEARTH_DEV_SMS=1`
 
 ## Deploy
 
+On Ubuntu, Debian, or a CentOS/RHEL-family host:
+
 ```bash
-cp .env.example .env
-docker compose up -d --build
+curl -fsSL https://raw.githubusercontent.com/maker2020/personal-agent/main/deploy/install.sh | sudo bash -s -- --deepseek-key "$DEEPSEEK_API_KEY" --domain agent.example.com
 ```
 
-Health: `GET /healthz`, readiness: `GET /readyz`.
+From a checkout:
+
+```bash
+sudo ./deploy/install.sh --deepseek-key "$DEEPSEEK_API_KEY" --domain agent.example.com
+```
+
+The script installs Docker and the compose plugin, writes `.env` with random `POSTGRES_PASSWORD`, admin password, and internal token, builds `hearth-sandbox:local`, and starts gateway, sentinel, and sandbox-manager as separate compose services under systemd. With `--domain`, Caddy terminates HTTPS. Backup and upgrade: `deploy/backup.sh`, `deploy/restore.sh`, `deploy/upgrade.sh`.
+
+Dev without Docker: `npm install && npm test && npm start`, then http://127.0.0.1:8787 (`owner` / `hearth-dev` if no admin password is set). The host-folder sandbox is dev-only.
