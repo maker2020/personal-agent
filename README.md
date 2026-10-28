@@ -66,7 +66,7 @@ sudo --preserve-env=DEEPSEEK_API_KEY ./deploy/install.sh --proxy external --doma
 
 The script installs Docker and the compose plugin, builds `hearth-sandbox:local`, and starts gateway, sentinel, and sandbox-manager as separate compose services under systemd. The manager image includes the Docker client. With `--domain` and the default proxy, Caddy terminates HTTPS. Backup and upgrade: `deploy/backup.sh`, `deploy/restore.sh`, `deploy/upgrade.sh`. `upgrade.sh` keeps `docker-compose.local.yml` when that file exists, plus any paths in `HEARTH_COMPOSE_FILES` (colon-separated).
 
-In-app voice needs UDP, not just the HTTPS proxy. Compose publishes UDP 50000–50199 and can add coturn with `--profile turn`. Set `HEARTH_ICE_PUBLIC_IP` to the public address. `stun.l.google.com` does not work from mainland China. Ports and the sample config are in [docs/voice.md](docs/voice.md) and [docs/voice.zh.md](docs/voice.zh.md).
+In-app voice needs UDP, not just the HTTPS proxy. Compose publishes UDP 50000–50049 (`HEARTH_RTC_PORT_MIN` / `MAX`) and can add coturn with `--profile turn`. The TURN URL is also offered over TCP, and over TLS on 5349 when `HEARTH_TURN_TLS=1`. Set `HEARTH_ICE_PUBLIC_IP` to the public address. `stun.l.google.com` does not work from mainland China. Ports, the private-peer deny list, and how to avoid one `docker-proxy` per port are in [docs/voice.md](docs/voice.md) and [docs/voice.zh.md](docs/voice.zh.md).
 
 The sandbox manager bind-mounts `/var/lib/hearth/workspaces` (override with an absolute `HEARTH_WORKSPACE_ROOT`) at that same path. Per-user containers use that host path, so `sandbox_write` and `sandbox_exec` see the same files, owned by uid 65534.
 

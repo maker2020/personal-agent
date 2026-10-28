@@ -26,7 +26,8 @@ test("per-user bind source is the workspace path the manager writes", async () =
   assert.match(pstn, /\$\{SIP_RTP_PORT_MIN:-10000\}-\$\{SIP_RTP_PORT_MAX:-10199\}:\$\{SIP_RTP_PORT_MIN:-10000\}-\$\{SIP_RTP_PORT_MAX:-10199\}\/udp/);
   assert.match(compose, /\$\{HEARTH_HTTP_BIND:-127\.0\.0\.1\}/);
   assert.match(compose, /\$\{HEARTH_HTTP_PORT:-8787\}/);
-  assert.match(compose, /\$\{HEARTH_ICE_PORT_MIN:-50000\}-\$\{HEARTH_ICE_PORT_MAX:-50199\}/);
+  assert.match(compose, /\$\{HEARTH_RTC_PORT_MIN:-50000\}-\$\{HEARTH_RTC_PORT_MAX:-50049\}/);
+  assert.match(compose, /turnutils_stunclient/);
 });
 
 test("a missing docker cli returns an error instead of crashing", async () => {

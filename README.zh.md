@@ -66,7 +66,7 @@ sudo --preserve-env=DEEPSEEK_API_KEY ./deploy/install.sh --proxy external --doma
 
 脚本会安装 Docker 和 compose 插件，构建 `hearth-sandbox:local`，并用 systemd 拉起相互独立的网关、哨兵和沙箱管理器。管理器镜像里带 Docker 客户端。默认在有域名时由 Caddy 做 HTTPS。备份和升级：`deploy/backup.sh`、`deploy/restore.sh`、`deploy/upgrade.sh`。存在 `docker-compose.local.yml` 时升级会带上它，`HEARTH_COMPOSE_FILES`（冒号分隔）里的文件也会带上。
 
-应用内语音走 UDP，不走 HTTPS 反代。compose 发布 UDP 50000–50199，需要中继时用 `--profile turn` 启动 coturn。把 `HEARTH_ICE_PUBLIC_IP` 设成公网地址。中国大陆访问不到 `stun.l.google.com`。端口和示例见 [docs/voice.zh.md](docs/voice.zh.md)。
+应用内语音走 UDP，不走 HTTPS 反代。compose 发布 UDP 50000–50049（`HEARTH_RTC_PORT_MIN` / `MAX`），需要中继时用 `--profile turn` 启动 coturn。TURN 地址会同时提供 TCP，`HEARTH_TURN_TLS=1` 时再提供 5349 上的 TLS。把 `HEARTH_ICE_PUBLIC_IP` 设成公网地址。中国大陆访问不到 `stun.l.google.com`。端口、私网拒绝列表，以及如何避免每个端口一个 `docker-proxy`，见 [docs/voice.zh.md](docs/voice.zh.md)。
 
 沙箱管理器把 `/var/lib/hearth/workspaces`（也可用绝对路径 `HEARTH_WORKSPACE_ROOT`）以相同路径挂载进去。每个用户的容器使用这个宿主机路径，因此 `sandbox_write` 和 `sandbox_exec` 看到的是同一批文件，属主是 uid 65534。
 

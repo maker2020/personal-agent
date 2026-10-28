@@ -67,8 +67,10 @@ services:
       HEARTH_TURN_USERNAME: ${HEARTH_TURN_USERNAME:-}
       HEARTH_TURN_PASSWORD: ${HEARTH_TURN_PASSWORD:-}
       HEARTH_ICE_PUBLIC_IP: ${HEARTH_ICE_PUBLIC_IP:-}
-      HEARTH_ICE_PORT_MIN: ${HEARTH_ICE_PORT_MIN:-50000}
-      HEARTH_ICE_PORT_MAX: ${HEARTH_ICE_PORT_MAX:-50199}
+      HEARTH_RTC_PORT_MIN: ${HEARTH_RTC_PORT_MIN:-50000}
+      HEARTH_RTC_PORT_MAX: ${HEARTH_RTC_PORT_MAX:-50049}
+      HEARTH_TURN_TLS: ${HEARTH_TURN_TLS:-0}
+      TURN_TLS_PORT: ${TURN_TLS_PORT:-5349}
       DATABASE_URL: postgres://hearth:${POSTGRES_PASSWORD}@postgres:5432/hearth
       DSH_HOME: /data/dsh
     volumes:
@@ -80,7 +82,7 @@ services:
         condition: service_healthy
     ports:
       - "${HEARTH_HTTP_BIND:-127.0.0.1}:${HEARTH_HTTP_PORT:-8787}:8787"
-      - "${HEARTH_ICE_PORT_MIN:-50000}-${HEARTH_ICE_PORT_MAX:-50199}:${HEARTH_ICE_PORT_MIN:-50000}-${HEARTH_ICE_PORT_MAX:-50199}/udp"
+      - "${HEARTH_RTC_PORT_MIN:-50000}-${HEARTH_RTC_PORT_MAX:-50049}:${HEARTH_RTC_PORT_MIN:-50000}-${HEARTH_RTC_PORT_MAX:-50049}/udp"
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8787/healthz"]
       interval: 10s
@@ -123,13 +125,25 @@ services:
       TURN_MIN_PORT: ${TURN_MIN_PORT:-49160}
       TURN_MAX_PORT: ${TURN_MAX_PORT:-49200}
       TURN_REALM: ${TURN_REALM:-hearth}
+      HEARTH_TURN_TLS: ${HEARTH_TURN_TLS:-0}
+      TURN_TLS_PORT: ${TURN_TLS_PORT:-5349}
+      TURN_CERT: ${TURN_CERT:-}
+      TURN_PKEY: ${TURN_PKEY:-}
+      HEARTH_TURN_ALLOW_PEER: ${HEARTH_TURN_ALLOW_PEER:-}
     volumes:
       - ./deploy/coturn/start.sh:/start.sh:ro
     entrypoint: ["/bin/sh", "/start.sh"]
     ports:
       - "${TURN_PORT:-3478}:${TURN_PORT:-3478}/udp"
       - "${TURN_PORT:-3478}:${TURN_PORT:-3478}/tcp"
+      - "${TURN_TLS_PORT:-5349}:${TURN_TLS_PORT:-5349}/tcp"
       - "${TURN_MIN_PORT:-49160}-${TURN_MAX_PORT:-49200}:${TURN_MIN_PORT:-49160}-${TURN_MAX_PORT:-49200}/udp"
+    healthcheck:
+      test: ["CMD", "turnutils_stunclient", "-p", "${TURN_PORT:-3478}", "127.0.0.1"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 10s
 
   caddy:
     image: ${HEARTH_IMAGE_PREFIX:-}library/caddy:2

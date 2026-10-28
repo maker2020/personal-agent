@@ -153,18 +153,40 @@ export function iceServersFromEnv(env: NodeJS.ProcessEnv): IceServer[] {
     servers.push({ urls: env.HEARTH_STUN_URL ?? "stun:stun.l.google.com:19302" });
   }
   if (env.HEARTH_TURN_URL) {
-    const turn: IceServer = { urls: env.HEARTH_TURN_URL };
-    if (env.HEARTH_TURN_USERNAME) turn.username = env.HEARTH_TURN_USERNAME;
-    if (env.HEARTH_TURN_PASSWORD) turn.credential = env.HEARTH_TURN_PASSWORD;
-    servers.push(turn);
+    const tls = env.HEARTH_TURN_TLS === "1" || env.HEARTH_TURN_TLS === "true" || env.HEARTH_TURN_TLS === "yes";
+    for (const urls of expandTurnUrls(env.HEARTH_TURN_URL, tls, env.TURN_TLS_PORT || "5349")) {
+      const turn: IceServer = { urls };
+      if (env.HEARTH_TURN_USERNAME) turn.username = env.HEARTH_TURN_USERNAME;
+      if (env.HEARTH_TURN_PASSWORD) turn.credential = env.HEARTH_TURN_PASSWORD;
+      servers.push(turn);
+    }
   }
   return servers;
 }
 
+export function expandTurnUrls(raw: string, tls: boolean, tlsPort = "5349"): string[] {
+  const urls = [raw];
+  const host = turnHost(raw);
+  const port = turnPort(raw) ?? "3478";
+  if (host && !raw.startsWith("turns:")) urls.push(`turn:${host}:${port}?transport=tcp`);
+  if (tls && host) urls.push(`turns:${host}:${tlsPort}?transport=tcp`);
+  return [...new Set(urls)];
+}
+
+function turnHost(url: string): string | undefined {
+  return /^turns?:(\[[^\]]+\]|[^:/?]+)/.exec(url)?.[1];
+}
+
+function turnPort(url: string): string | undefined {
+  return /^turns?:(?:\[[^\]]+\]|[^:/?]+):(\d+)/.exec(url)?.[1];
+}
+
 function icePorts(env: NodeJS.ProcessEnv): { icePortMin?: number; icePortMax?: number } {
-  if (!env.HEARTH_ICE_PORT_MIN || !env.HEARTH_ICE_PORT_MAX) return {};
-  const icePortMin = num(env.HEARTH_ICE_PORT_MIN, 0);
-  const icePortMax = num(env.HEARTH_ICE_PORT_MAX, 0);
+  const minRaw = env.HEARTH_RTC_PORT_MIN ?? env.HEARTH_ICE_PORT_MIN;
+  const maxRaw = env.HEARTH_RTC_PORT_MAX ?? env.HEARTH_ICE_PORT_MAX;
+  if (!minRaw || !maxRaw) return {};
+  const icePortMin = num(minRaw, 0);
+  const icePortMax = num(maxRaw, 0);
   if (icePortMin <= 0 || icePortMax < icePortMin) return {};
   return { icePortMin, icePortMax };
 }

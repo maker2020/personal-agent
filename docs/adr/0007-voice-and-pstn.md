@@ -25,7 +25,7 @@ A SIP user agent inside the sandbox would put trunk credentials next to untruste
 
 - Sandboxes can scale without opening UDP 5060 on every container.
 - The default compose file does not publish SIP or RTP. Enterprise PSTN adds them with `docker compose -f docker-compose.yml -f docker-compose.pstn.yml up -d` (UDP 5060 and UDP 10000–10199, or `SIP_SIGNAL_PORT` / `SIP_RTP_PORT_MIN` / `SIP_RTP_PORT_MAX`). `install.sh` and `deploy/upgrade.sh` include that override when `.env` has `SIP_ENABLED=1`.
-- In-app WebRTC ICE servers, the UDP port range, and the announced public address are configuration (`HEARTH_STUN_URL`, `HEARTH_ICE_SERVERS`, `HEARTH_TURN_*`, `HEARTH_ICE_PORT_MIN`/`MAX`, `HEARTH_ICE_PUBLIC_IP`). Compose publishes that UDP range. coturn is an optional `turn` profile. `stun.l.google.com` is not a usable default on networks that block it. See [docs/voice.md](../voice.md).
+- In-app WebRTC ICE servers, the UDP port range, and the announced public address are configuration (`HEARTH_STUN_URL`, `HEARTH_ICE_SERVERS`, `HEARTH_TURN_*`, `HEARTH_RTC_PORT_MIN`/`MAX`, `HEARTH_ICE_PUBLIC_IP`). Compose publishes that UDP range, 50000–50049 by default. A TURN URL is also served over TCP, and over TLS on 5349 when `HEARTH_TURN_TLS=1`. coturn is an optional `turn` profile and denies relay to private addresses. `stun.l.google.com` is not a usable default on networks that block it. See [docs/voice.md](../voice.md).
 - Adding trunk capacity or DIDs is configuration on the gateway.
 - The core product can ship and be tested without an Aliyun number.
 - A human can later join a PSTN call with the same WebRTC peer; that takeover sits on the gateway, not in the sandbox.

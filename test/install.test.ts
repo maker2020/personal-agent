@@ -124,6 +124,36 @@ hearth_compose_arguments "$dir"
   assert.equal(text.includes("--profile\ntls"), false);
 });
 
+test("coturn denies private peers and does not pass removed 4.18 flags", async () => {
+  const start = await readFile(path.join(process.cwd(), "deploy/coturn/start.sh"), "utf8");
+  assert.equal(start.includes("--no-dtls"), false);
+  assert.equal(start.includes("--no-cli"), false);
+  assert.match(start, /--denied-peer-ip=10\.0\.0\.0-10\.255\.255\.255/);
+  assert.match(start, /--denied-peer-ip=172\.16\.0\.0-172\.31\.255\.255/);
+  assert.match(start, /--denied-peer-ip=192\.168\.0\.0-192\.168\.255\.255/);
+  assert.match(start, /--denied-peer-ip=127\.0\.0\.0-127\.255\.255\.255/);
+  assert.match(start, /--denied-peer-ip=169\.254\.0\.0-169\.254\.255\.255/);
+  assert.match(start, /--denied-peer-ip=::1/);
+  assert.match(start, /--denied-peer-ip=fc00::/);
+  assert.match(start, /--allowed-peer-ip/);
+});
+
+test("upgrade retries git pull", () => {
+  const result = spawnSync("bash", ["-lc", `
+set -euo pipefail
+HEARTH_RETRY_DELAY=0
+source "${path.join(process.cwd(), "deploy/upgrade.sh")}"
+hearth_retry 3 true
+if hearth_retry 2 false; then exit 1; fi
+n=0
+try() { n=$((n + 1)); test "$n" -ge 2; }
+hearth_retry 3 try
+echo ok
+`], { encoding: "utf8" });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.match(result.stderr ?? "", /attempt 1\/2 failed/);
+});
+
 test("install.sh prompts for the key with hidden input", async () => {
   const source = await readFile(script, "utf8");
   assert.match(source, /read -r -s -p "DeepSeek API key/);

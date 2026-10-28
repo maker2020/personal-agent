@@ -25,7 +25,7 @@
 
 - 沙箱扩容时不必给每个容器开放 UDP 5060。
 - 默认 compose 不发布 SIP 和 RTP。企业版真实电话用 `docker compose -f docker-compose.yml -f docker-compose.pstn.yml up -d` 补上 UDP 5060 和 UDP 10000–10199（或 `SIP_SIGNAL_PORT` / `SIP_RTP_PORT_MIN` / `SIP_RTP_PORT_MAX`）。`.env` 里 `SIP_ENABLED=1` 时，`install.sh` 和 `deploy/upgrade.sh` 会带上这个覆盖文件。
-- 应用内 WebRTC 的 ICE 服务器、UDP 端口段和宣告的公网地址都是配置（`HEARTH_STUN_URL`、`HEARTH_ICE_SERVERS`、`HEARTH_TURN_*`、`HEARTH_ICE_PORT_MIN`/`MAX`、`HEARTH_ICE_PUBLIC_IP`）。compose 发布这段 UDP。coturn 是可选的 `turn` profile。被墙的网络上不能把 `stun.l.google.com` 当作默认值。见 [docs/voice.zh.md](../voice.zh.md)。
+- 应用内 WebRTC 的 ICE 服务器、UDP 端口段和宣告的公网地址都是配置（`HEARTH_STUN_URL`、`HEARTH_ICE_SERVERS`、`HEARTH_TURN_*`、`HEARTH_RTC_PORT_MIN`/`MAX`、`HEARTH_ICE_PUBLIC_IP`）。compose 发布这段 UDP，默认 50000–50049。TURN 地址会同时以 TCP 下发，`HEARTH_TURN_TLS=1` 时再加 5349 上的 TLS。coturn 是可选的 `turn` profile，并且拒绝把中继转到私网地址。被墙的网络上不能把 `stun.l.google.com` 当作默认值。见 [docs/voice.zh.md](../voice.zh.md)。
 - 增加中继容量或号码只改网关配置。
 - 核心产品可以在没有阿里云号码的情况下交付和测试。
 - 用户以后可以用同一个 WebRTC 对端加入助手正在进行的真实电话；接管发生在网关，不在沙箱里。

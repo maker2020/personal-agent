@@ -4,7 +4,7 @@ import { MediaStreamTrack, RTCPeerConnection, RtpHeader, RtpPacket, usePCMU } fr
 import { pcmToPayload } from "../packages/telephony/src/g711.js";
 import { answerUserVoice } from "../packages/telephony/src/webrtc.js";
 import { startHearth } from "../packages/gateway/src/app.js";
-import { iceServersFromEnv } from "../packages/shared/src/config.js";
+import { iceServersFromEnv, loadConfig } from "../packages/shared/src/config.js";
 import { entitlements } from "../packages/shared/src/entitlements.js";
 
 test("personal plan does not include pstn or sms", () => {
@@ -29,13 +29,31 @@ test("ice servers accept stun, turn credentials, and a json list", () => {
     HEARTH_TURN_PASSWORD: "secret",
   });
   assert.equal(turn[0]?.urls, "stun:203.0.113.10:3478");
-  assert.equal(turn[1]?.username, "hearth");
+  assert.equal(turn[1]?.urls, "turn:203.0.113.10:3478?transport=udp");
   assert.equal(turn[1]?.credential, "secret");
+  assert.equal(turn[2]?.urls, "turn:203.0.113.10:3478?transport=tcp");
+  assert.equal(turn[2]?.username, "hearth");
+  const tls = iceServersFromEnv({
+    HEARTH_STUN_URL: "",
+    HEARTH_TURN_URL: "turn:203.0.113.10:3478",
+    HEARTH_TURN_TLS: "1",
+    TURN_TLS_PORT: "5349",
+  });
+  assert.deepEqual(tls.map((item) => item.urls), [
+    "turn:203.0.113.10:3478",
+    "turn:203.0.113.10:3478?transport=tcp",
+    "turns:203.0.113.10:5349?transport=tcp",
+  ]);
   const listed = iceServersFromEnv({
     HEARTH_STUN_URL: "",
     HEARTH_ICE_SERVERS: JSON.stringify([{ urls: ["stun:stun.example:3478"], username: "u", credential: "p" }]),
   });
   assert.deepEqual(listed[0], { urls: ["stun:stun.example:3478"], username: "u", credential: "p" });
+  const ports = loadConfig({ HEARTH_STUN_URL: "", HEARTH_RTC_PORT_MIN: "50000", HEARTH_RTC_PORT_MAX: "50049" });
+  assert.equal(ports.icePortMin, 50000);
+  assert.equal(ports.icePortMax, 50049);
+  const legacy = loadConfig({ HEARTH_STUN_URL: "", HEARTH_ICE_PORT_MIN: "51000", HEARTH_ICE_PORT_MAX: "51010" });
+  assert.equal(legacy.icePortMin, 51000);
 });
 
 test("answer advertises the public address on a pinned udp port", async () => {
