@@ -17,6 +17,11 @@ export type VoiceEvent =
 
 export const SPOKEN_HINT = "The user is on a live voice call. Reply in one or two short spoken sentences in their language. Do not use markdown, lists, or code.";
 
+export function splitSentences(text: string): string[] {
+  const parts = text.split(/(?<=[。！？!?；;\n])/u).map((part) => part.trim()).filter(Boolean);
+  return parts.length ? parts : [text.trim()].filter(Boolean);
+}
+
 export class VoiceSession {
   private speaking = false;
   private cancelTts = false;
@@ -126,17 +131,23 @@ export class VoiceSession {
       return;
     }
     this.opts.onEvent({ type: "reply", text: reply, llmMs });
-    const ttsStarted = Date.now();
-    const pcm = await this.opts.tts.synthesize(reply);
-    const ttsMs = Date.now() - ttsStarted;
-    if (generation !== this.generation || pcm.length === 0) return;
-    this.opts.onEvent({ type: "audio", ttsMs, samples: pcm.length });
-    await this.play(pcm, generation);
+    this.speaking = true;
+    this.cancelTts = false;
+    for (const sentence of splitSentences(reply)) {
+      if (this.cancelTts || generation !== this.generation) break;
+      const ttsStarted = Date.now();
+      const pcm = await this.opts.tts.synthesize(sentence);
+      const ttsMs = Date.now() - ttsStarted;
+      if (this.cancelTts || generation !== this.generation) break;
+      this.opts.onEvent({ type: "audio", ttsMs, samples: pcm.length });
+      if (pcm.length === 0) continue;
+      await this.play(pcm, generation);
+    }
+    if (generation === this.generation) this.speaking = false;
   }
 
   private async play(pcm: Int16Array, generation: number): Promise<void> {
     this.speaking = true;
-    this.cancelTts = false;
     const sampleRate = this.opts.sampleRate ?? 8000;
     const delay = this.opts.frameMs ?? 20;
     const frame = Math.max(1, Math.round(sampleRate * delay / 1000));
@@ -145,7 +156,6 @@ export class VoiceSession {
       this.opts.onOutbound(pcm.subarray(offset, Math.min(offset + frame, pcm.length)));
       if (delay > 0 && offset + frame < pcm.length) await new Promise((resolve) => setTimeout(resolve, delay));
     }
-    if (generation === this.generation) this.speaking = false;
   }
 
   private append(pcm: Int16Array): void {

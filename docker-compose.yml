@@ -49,6 +49,29 @@ services:
       start_period: 30s
     restart: unless-stopped
 
+  vosk:
+    build:
+      context: .
+      dockerfile: Dockerfile.speech
+      args:
+        APT_MIRROR: ${HEARTH_APT_MIRROR:-}
+        PIP_INDEX_URL: ${PIP_INDEX_URL:-}
+        HEARTH_IMAGE_PREFIX: ${HEARTH_IMAGE_PREFIX:-}
+    environment:
+      VOSK_MODEL: /models/vosk-model-small-cn-0.22
+      SPEECH_PORT: 2700
+      EDGE_VOICE: ${HEARTH_TTS_VOICE:-zh-CN-XiaoxiaoNeural}
+    volumes:
+      - ${HEARTH_VOSK_MODEL_DIR:-/var/lib/hearth/vosk}:/models:ro
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:2700/healthz')"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 20s
+    restart: unless-stopped
+
   gateway:
     build: *hearth-build
     command: ["node", "dist/packages/gateway/src/main.js"]
@@ -71,6 +94,13 @@ services:
       HEARTH_RTC_PORT_MAX: ${HEARTH_RTC_PORT_MAX:-50049}
       HEARTH_TURN_TLS: ${HEARTH_TURN_TLS:-0}
       TURN_TLS_PORT: ${TURN_TLS_PORT:-5349}
+      HEARTH_ASR_PROVIDER: ${HEARTH_ASR_PROVIDER:-vosk}
+      HEARTH_VOSK_URL: ${HEARTH_VOSK_URL:-ws://vosk:2700}
+      HEARTH_TTS_PROVIDER: ${HEARTH_TTS_PROVIDER:-edge}
+      HEARTH_TTS_URL: ${HEARTH_TTS_URL:-http://vosk:2700/tts}
+      HEARTH_TTS_VOICE: ${HEARTH_TTS_VOICE:-zh-CN-XiaoxiaoNeural}
+      HEARTH_TTS_RATE: ${HEARTH_TTS_RATE:-}
+      HEARTH_TTS_PITCH: ${HEARTH_TTS_PITCH:-}
       DATABASE_URL: postgres://hearth:${POSTGRES_PASSWORD}@postgres:5432/hearth
       DSH_HOME: /data/dsh
     volumes:
@@ -79,6 +109,8 @@ services:
       postgres:
         condition: service_healthy
       sandbox:
+        condition: service_healthy
+      vosk:
         condition: service_healthy
     ports:
       - "${HEARTH_HTTP_BIND:-127.0.0.1}:${HEARTH_HTTP_PORT:-8787}:8787"

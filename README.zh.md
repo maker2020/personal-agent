@@ -14,7 +14,7 @@ npm test
 npm start
 ```
 
-浏览器打开 http://127.0.0.1:8787 。未设置 `HEARTH_ADMIN_PASSWORD` 时，开发账号是 `owner` / `hearth-dev`。ICE 服务器、UDP 端口、coturn 和硅基流动语音配置见 [docs/voice.zh.md](docs/voice.zh.md)。
+浏览器打开 http://127.0.0.1:8787 。未设置 `HEARTH_ADMIN_PASSWORD` 时，开发账号是 `owner` / `hearth-dev`。ICE 服务器、UDP 端口、coturn，以及 Vosk / Edge 语音服务见 [docs/voice.zh.md](docs/voice.zh.md)。
 
 `node scripts/verify-voice-browser.mjs` 用无头 Chrome、手机尺寸视口登录，并确认通话状态变为「通话中」。
 

@@ -45,6 +45,8 @@ test("dry-run selects debian and centos 7 paths", async () => {
   assert.match(china.stdout, /registry\.npmmirror\.com/);
   assert.match(china.stdout, /HEARTH_APT_MIRROR=https:\/\/mirrors\.aliyun\.com/);
   assert.match(china.stdout, /mirror\.ccs\.tencentyun\.com\//);
+  assert.match(china.stdout, /PIP_INDEX_URL=https:\/\/mirrors\.aliyun\.com\/pypi\/simple/);
+  assert.match(china.stdout, /hf-mirror\.com\/localstack\/vosk-models/);
   assert.match(china.stdout, /HEARTH_DOCKER_REGISTRY_MIRROR/);
   const refused = runInstall(["--dry-run", "--noninteractive", "--os", "centos7", "--prefix", prefix]);
   assert.equal(refused.status, 1);
@@ -136,6 +138,30 @@ test("coturn denies private peers and does not pass removed 4.18 flags", async (
   assert.match(start, /--denied-peer-ip=::1/);
   assert.match(start, /--denied-peer-ip=fc00::/);
   assert.match(start, /--allowed-peer-ip/);
+});
+
+test("upgrade fills China speech mirrors without replacing an existing model URL", () => {
+  const result = spawnSync("bash", ["-lc", `
+set -euo pipefail
+source "${path.join(process.cwd(), "deploy/upgrade.sh")}"
+dir=$(mktemp -d)
+printf '%s\n' 'HEARTH_APT_MIRROR=https://mirrors.aliyun.com' 'HEARTH_IMAGE_PREFIX=mirror.ccs.tencentyun.com/' > "$dir/.env"
+hearth_prepare_speech_env "$dir/.env"
+grep -q '^PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple$' "$dir/.env"
+grep -q '^HEARTH_VOSK_MODEL_URL=https://hf-mirror.com/localstack/vosk-models/resolve/main/vosk-model-small-cn-0.22.zip$' "$dir/.env"
+hearth_prepare_speech_env "$dir/.env"
+test "$(grep -c '^PIP_INDEX_URL=' "$dir/.env")" -eq 1
+printf '%s\n' 'HEARTH_VOSK_MODEL_URL=https://example.test/model.zip' > "$dir/keep.env"
+printf '%s\n' 'HEARTH_APT_MIRROR=https://mirrors.aliyun.com' >> "$dir/keep.env"
+hearth_prepare_speech_env "$dir/keep.env"
+grep -q '^HEARTH_VOSK_MODEL_URL=https://example.test/model.zip$' "$dir/keep.env"
+plain=$(mktemp -d)
+printf '%s\n' 'HEARTH_DOMAIN=agent.example.com' > "$plain/.env"
+hearth_prepare_speech_env "$plain/.env"
+test "$(grep -c 'VOSK_MODEL_URL' "$plain/.env")" -eq 0
+echo ok
+`], { encoding: "utf8" });
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
 });
 
 test("upgrade retries git pull", () => {

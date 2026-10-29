@@ -14,7 +14,7 @@ npm test
 npm start
 ```
 
-Then open http://127.0.0.1:8787 . Dev login is `owner` / `hearth-dev` unless `HEARTH_ADMIN_PASSWORD` is set. ICE servers, the UDP port range, coturn, and SiliconFlow speech settings are in [docs/voice.md](docs/voice.md).
+Then open http://127.0.0.1:8787 . Dev login is `owner` / `hearth-dev` unless `HEARTH_ADMIN_PASSWORD` is set. ICE servers, the UDP port range, coturn, and the Vosk / Edge speech sidecar are in [docs/voice.md](docs/voice.md).
 
 `node scripts/verify-voice-browser.mjs` signs in with headless Chrome at a phone-sized viewport and checks that the call reaches “通话中”.
 

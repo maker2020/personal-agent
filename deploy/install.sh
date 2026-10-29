@@ -55,6 +55,13 @@ ENV_KEYS=(
   HEARTH_TTS_API_KEY
   HEARTH_TTS_MODEL
   HEARTH_TTS_VOICE
+  HEARTH_TTS_URL
+  HEARTH_TTS_RATE
+  HEARTH_TTS_PITCH
+  HEARTH_VOSK_URL
+  HEARTH_VOSK_MODEL_URL
+  HEARTH_VOSK_MODEL_DIR
+  PIP_INDEX_URL
   HEARTH_TURN_URL
   HEARTH_TURN_USERNAME
   HEARTH_TURN_PASSWORD
@@ -223,6 +230,12 @@ hearth_merge_env() {
   if [[ "${MIRROR:-}" == "cn" && -z "${next[DOCKER_CLI_BASE]:-}" ]]; then
     next[DOCKER_CLI_BASE]="https://mirrors.aliyun.com/docker-ce/linux/static/stable"
   fi
+  if [[ "${MIRROR:-}" == "cn" && -z "${next[PIP_INDEX_URL]:-}" ]]; then
+    next[PIP_INDEX_URL]="https://mirrors.aliyun.com/pypi/simple"
+  fi
+  if [[ "${MIRROR:-}" == "cn" && -z "${next[HEARTH_VOSK_MODEL_URL]:-}" ]]; then
+    next[HEARTH_VOSK_MODEL_URL]="https://hf-mirror.com/localstack/vosk-models/resolve/main/vosk-model-small-cn-0.22.zip"
+  fi
   if [[ "${PROXY_SET:-}" == "1" ]]; then
     next[HEARTH_PROXY]="${PROXY:-none}"
   elif [[ -z "${next[HEARTH_PROXY]:-}" ]]; then
@@ -267,6 +280,13 @@ hearth_merge_env() {
     TURN_PORT=3478
     TURN_MIN_PORT=49160
     TURN_MAX_PORT=49200
+    HEARTH_ASR_PROVIDER=vosk
+    HEARTH_TTS_PROVIDER=edge
+    HEARTH_TTS_VOICE=zh-CN-XiaoxiaoNeural
+    HEARTH_VOSK_URL=ws://vosk:2700
+    HEARTH_TTS_URL=http://vosk:2700/tts
+    HEARTH_VOSK_MODEL_DIR=/var/lib/hearth/vosk
+    HEARTH_VOSK_MODEL_URL=https://alphacephei.com/vosk/models/vosk-model-small-cn-0.22.zip
   )
   for item in "${defaults[@]}"; do
     key="${item%%=*}"
@@ -345,7 +365,7 @@ hearth_install_docker() {
   case "$family" in
     debian)
       apt-get update
-      apt-get install -y ca-certificates curl gnupg git openssl
+      apt-get install -y ca-certificates curl gnupg git openssl unzip
       if [[ "$MIRROR" == "cn" && -n "${HEARTH_DOCKER_MIRROR_BASE:-}" && "$base" != "https://mirrors.aliyun.com/docker-ce" ]]; then
         hearth_apt_docker_repo "$base"
       elif [[ "$MIRROR" == "cn" ]]; then
@@ -355,7 +375,7 @@ hearth_install_docker() {
       fi
       ;;
     rhel)
-      dnf install -y ca-certificates curl git openssl
+      dnf install -y ca-certificates curl git openssl unzip
       if [[ "$MIRROR" == "cn" && -n "${HEARTH_DOCKER_MIRROR_BASE:-}" && "$base" != "https://mirrors.aliyun.com/docker-ce" ]]; then
         hearth_yum_docker_repo "$base" dnf
       elif [[ "$MIRROR" == "cn" ]]; then
@@ -365,7 +385,7 @@ hearth_install_docker() {
       fi
       ;;
     centos7)
-      yum install -y yum-utils git openssl ca-certificates
+      yum install -y yum-utils git openssl ca-certificates unzip
       hearth_yum_docker_repo "$base" yum
       ;;
     *)
@@ -543,7 +563,7 @@ EOF
     fi
     log "would merge ${ENV_FILE} and keep an existing POSTGRES_PASSWORD"
     if [[ "$MIRROR" == "cn" ]]; then
-      log "would set HEARTH_APT_MIRROR=https://mirrors.aliyun.com HEARTH_IMAGE_PREFIX=mirror.ccs.tencentyun.com/ DOCKER_CLI_BASE=https://mirrors.aliyun.com/docker-ce/linux/static/stable"
+      log "would set HEARTH_APT_MIRROR=https://mirrors.aliyun.com HEARTH_IMAGE_PREFIX=mirror.ccs.tencentyun.com/ DOCKER_CLI_BASE=https://mirrors.aliyun.com/docker-ce/linux/static/stable PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple HEARTH_VOSK_MODEL_URL=https://hf-mirror.com/localstack/vosk-models/resolve/main/vosk-model-small-cn-0.22.zip"
       if [[ -n "${HEARTH_DOCKER_REGISTRY_MIRROR:-}" ]]; then
         log "would write /etc/docker/daemon.json registry-mirrors from HEARTH_DOCKER_REGISTRY_MIRROR"
       else
@@ -555,6 +575,7 @@ EOF
       log "would write nginx vhost:"
       hearth_nginx_vhost "${DOMAIN:-example.com}" "$HTTP_PORT"
     fi
+    log "would download the small Chinese Vosk model into /var/lib/hearth/vosk if it is missing"
     log "dry-run writes nothing"
     exit 0
   fi
@@ -587,6 +608,11 @@ EOF
 
   hearth_clone
   hearth_merge_env
+  # shellcheck disable=SC1091
+  source "$PREFIX/deploy/vosk-model.sh"
+  vosk_dir="$(grep -E '^HEARTH_VOSK_MODEL_DIR=' "$ENV_FILE" | head -n 1 | cut -d= -f2- || true)"
+  vosk_url="$(grep -E '^HEARTH_VOSK_MODEL_URL=' "$ENV_FILE" | head -n 1 | cut -d= -f2- || true)"
+  hearth_fetch_vosk_model "${vosk_dir:-/var/lib/hearth/vosk}" "${vosk_url:-https://alphacephei.com/vosk/models/vosk-model-small-cn-0.22.zip}"
 
   local workspace="${HEARTH_WORKSPACE_ROOT:-/var/lib/hearth/workspaces}"
   if [[ -f "$ENV_FILE" ]]; then

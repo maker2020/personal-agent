@@ -1,3 +1,5 @@
+import WebSocket from "ws";
+
 export interface SpeechRecognizer {
   transcribe(pcm: Int16Array, sampleRate: number): Promise<string>;
 }
@@ -21,21 +23,30 @@ export type OpenAiSpeechOptions = {
 };
 
 const SILICONFLOW = "https://api.siliconflow.cn/v1";
+const DEFAULT_VOSK_URL = "ws://vosk:2700";
+const DEFAULT_EDGE_URL = "http://vosk:2700/tts";
 
 export function speechProviders(env: NodeJS.ProcessEnv): { asr?: SpeechRecognizer; tts?: SpeechSynthesizer; asrEnabled: boolean; ttsEnabled: boolean } {
-  const asrProvider = namedProvider(env.HEARTH_ASR_PROVIDER, env.HEARTH_ASR_API_KEY);
-  const ttsProvider = namedProvider(env.HEARTH_TTS_PROVIDER, env.HEARTH_TTS_API_KEY);
-  const asrEnabled = asrProvider === "openai" && Boolean(env.HEARTH_ASR_API_KEY);
-  const ttsEnabled = ttsProvider === "openai" && Boolean(env.HEARTH_TTS_API_KEY);
+  const asrProvider = asrChoice(env);
+  const ttsProvider = ttsChoice(env);
+  const asrEnabled = asrProvider === "vosk" || (asrProvider === "openai" && Boolean(env.HEARTH_ASR_API_KEY));
+  const ttsEnabled = ttsProvider === "edge" || (ttsProvider === "openai" && Boolean(env.HEARTH_TTS_API_KEY));
   return {
     asrEnabled,
     ttsEnabled,
-    ...(asrEnabled ? { asr: new OpenAiTranscription({
+    ...(asrEnabled && asrProvider === "vosk" ? { asr: new VoskTranscription({ url: env.HEARTH_VOSK_URL || DEFAULT_VOSK_URL }) } : {}),
+    ...(asrEnabled && asrProvider === "openai" ? { asr: new OpenAiTranscription({
       baseUrl: env.HEARTH_ASR_BASE_URL || SILICONFLOW,
       apiKey: env.HEARTH_ASR_API_KEY ?? "",
       model: env.HEARTH_ASR_MODEL || "FunAudioLLM/SenseVoiceSmall",
     }) } : {}),
-    ...(ttsEnabled ? { tts: new OpenAiSpeech({
+    ...(ttsEnabled && ttsProvider === "edge" ? { tts: new EdgeSpeech({
+      url: env.HEARTH_TTS_URL || DEFAULT_EDGE_URL,
+      voice: env.HEARTH_TTS_VOICE || "zh-CN-XiaoxiaoNeural",
+      rate: env.HEARTH_TTS_RATE || "+0%",
+      pitch: env.HEARTH_TTS_PITCH || "+0Hz",
+    }) } : {}),
+    ...(ttsEnabled && ttsProvider === "openai" ? { tts: new OpenAiSpeech({
       baseUrl: env.HEARTH_TTS_BASE_URL || SILICONFLOW,
       apiKey: env.HEARTH_TTS_API_KEY ?? "",
       model: env.HEARTH_TTS_MODEL || "FunAudioLLM/CosyVoice2-0.5B",
@@ -44,11 +55,81 @@ export function speechProviders(env: NodeJS.ProcessEnv): { asr?: SpeechRecognize
   };
 }
 
-function namedProvider(value: string | undefined, key: string | undefined): "openai" | "none" {
+function asrChoice(env: NodeJS.ProcessEnv): "vosk" | "openai" | "none" {
+  const value = env.HEARTH_ASR_PROVIDER;
   if (value === "none") return "none";
   if (value === "openai") return "openai";
-  if ((value == null || value === "") && key) return "openai";
+  if (value === "vosk" || value == null || value === "") return "vosk";
   return "none";
+}
+
+function ttsChoice(env: NodeJS.ProcessEnv): "edge" | "openai" | "none" {
+  const value = env.HEARTH_TTS_PROVIDER;
+  if (value === "none") return "none";
+  if (value === "openai") return "openai";
+  if (value === "edge" || value == null || value === "") return "edge";
+  return "none";
+}
+
+export class VoskTranscription implements SpeechRecognizer {
+  constructor(private opts: { url: string }) {}
+
+  transcribe(pcm: Int16Array, sampleRate: number): Promise<string> {
+    const audio = resampleLinear(pcm, sampleRate, 16000);
+    const payload = Buffer.from(audio.buffer, audio.byteOffset, audio.byteLength);
+    return new Promise((resolve, reject) => {
+      const socket = new WebSocket(this.opts.url);
+      let settled = false;
+      let text = "";
+      const finish = (error?: Error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        socket.close();
+        if (error) reject(error);
+        else resolve(text.trim());
+      };
+      const timer = setTimeout(() => finish(new SpeechProviderError(0, "vosk timed out")), 20_000);
+      socket.on("open", () => {
+        socket.send(JSON.stringify({ config: { sample_rate: 16000 } }));
+        if (payload.length) socket.send(payload);
+        socket.send(JSON.stringify({ eof: 1 }));
+      });
+      socket.on("message", (data) => {
+        try {
+          const message = JSON.parse(String(data)) as { text?: string };
+          if (typeof message.text !== "string") return;
+          const next = message.text.trim();
+          if (next) text = next;
+          if (text) finish();
+        } catch {
+          finish(new SpeechProviderError(0, "vosk returned non-json"));
+        }
+      });
+      socket.on("error", (error) => finish(new SpeechProviderError(0, `vosk ${error.message}`)));
+      socket.on("close", () => finish());
+    });
+  }
+}
+
+export class EdgeSpeech implements SpeechSynthesizer {
+  constructor(private opts: { url: string; voice: string; rate: string; pitch: string; fetchImpl?: typeof fetch }) {}
+
+  async synthesize(text: string): Promise<Int16Array> {
+    let response: Response;
+    try {
+      response = await (this.opts.fetchImpl ?? fetch)(this.opts.url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text, voice: this.opts.voice, rate: this.opts.rate, pitch: this.opts.pitch }),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "network error";
+      throw new SpeechProviderError(0, `edge-tts ${message}`);
+    }
+    if (!response.ok) throw await providerError(response, "");
+    return pcmFromBytes(Buffer.from(await response.arrayBuffer()));
+  }
 }
 
 export class OpenAiTranscription implements SpeechRecognizer {

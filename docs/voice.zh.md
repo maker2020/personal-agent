@@ -6,21 +6,19 @@
 
 登录后打开 **语音**，点通话按钮。页面是移动端 WebRTC 客户端：一条音频，优先 PCMU，开启回声消除，远端音轨用 `playsinline` 播放。服务端在 `POST /api/voice/calls` 应答。ICE 服务器来自 `GET /api/voice/config`，同时返回 `asr` 和 `tts`。
 
-语音走 OpenAI 兼容接口，默认主机是硅基流动。每通电话有自己的会话。识别结果走和文字聊天相同的助手循环，合成前去掉 Markdown。大约 700 毫秒静音结束一句。播放按 20 毫秒一帧送出，对方可以打断。
+语音识别默认是本机 Vosk，模型 `vosk-model-small-cn-0.22`（约 42 MB），不需要密钥，跑在 compose 的 `vosk` 服务里。网关把每一句转成 16 kHz 单声道 PCM，发到 `HEARTH_VOSK_URL`（默认 `ws://vosk:2700`）。合成默认用微软 Edge 语音，同一个容器，`HEARTH_TTS_PROVIDER=edge`，声音 `zh-CN-XiaoxiaoNeural`。回答按句子合成，第一句先播放。语速和音高是 `HEARTH_TTS_RATE`、`HEARTH_TTS_PITCH`（`+0%`、`+0Hz`）。
+
+`install.sh` 和 `upgrade.sh` 在 `/var/lib/hearth/vosk` 里还没有 `vosk-model-small-cn-0.22/am` 时下载模型。默认地址是 `https://alphacephei.com/vosk/models/vosk-model-small-cn-0.22.zip`。`--mirror cn` 改用 `https://hf-mirror.com/localstack/vosk-models/resolve/main/vosk-model-small-cn-0.22.zip`，pip 走 `https://mirrors.aliyun.com/pypi/simple`。可以用 `HEARTH_VOSK_MODEL_URL` 或 `PIP_INDEX_URL` 换成别的镜像。已经写了阿里云 apt 镜像或腾讯云镜像前缀的机器，`upgrade.sh` 会在这两行还不存在时补上。这个服务从 `python:3.12-slim` 构建，内存限制 512 MB，不映射宿主机端口。网关等它的健康检查通过才启动。
+
+先拉下这一版，再跑新的升级脚本。服务器上原来的 `upgrade.sh` 不会下载模型，模型没到位时 Compose 会一直等这个容器：
 
 ```bash
-HEARTH_ASR_PROVIDER=openai
-HEARTH_ASR_BASE_URL=https://api.siliconflow.cn/v1
-HEARTH_ASR_API_KEY=
-HEARTH_ASR_MODEL=FunAudioLLM/SenseVoiceSmall
-HEARTH_TTS_PROVIDER=openai
-HEARTH_TTS_BASE_URL=https://api.siliconflow.cn/v1
-HEARTH_TTS_API_KEY=
-HEARTH_TTS_MODEL=FunAudioLLM/CosyVoice2-0.5B
-HEARTH_TTS_VOICE=FunAudioLLM/CosyVoice2-0.5B:anna
+cd /opt/hearth
+git pull --ff-only
+sudo bash deploy/upgrade.sh
 ```
 
-`HEARTH_ASR_PROVIDER=none` 或没有密钥时，识别关闭。页面显示「语音识别/合成未配置」，服务端不播放提示音。以后可以按同样的 `transcribe` / `synthesize` 接口接阿里云 NLS 或腾讯云。
+`HEARTH_ASR_PROVIDER=openai` 且设置了 `HEARTH_ASR_API_KEY` 时，仍走托管识别接口（默认硅基流动）。合成同理，`HEARTH_TTS_PROVIDER=openai`。设成 `none` 就关闭这一侧：`/api/voice/config` 返回 false，页面显示「语音识别/合成未配置」，服务端不播放提示音。
 
 `HEARTH_STUN_URL` 是一条 STUN。留空则只收集 host 候选（本机测试，以及 `stun.l.google.com` 被墙的网络）。`HEARTH_ICE_SERVERS` 是 JSON 数组，元素形如 `{ "urls", "username", "credential" }`。也可以用 `HEARTH_TURN_URL`、`HEARTH_TURN_USERNAME`、`HEARTH_TURN_PASSWORD` 追加 TURN。网关会同时下发 `turn:<主机>:<端口>?transport=tcp`，UDP 被封时仍能通话。`HEARTH_TURN_TLS=1` 再增加 `turns:<主机>:5349?transport=tcp`（端口是 `TURN_TLS_PORT`）。浏览器拿到同一份列表，包含 TURN 口令，因为它要向中继认证。
 

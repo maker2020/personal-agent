@@ -6,21 +6,19 @@ English notes are in [the ADR](adr/0007-voice-and-pstn.md). 中文说明见 [voi
 
 Sign in, open **语音 / Voice**, and tap the call button. The page is a mobile WebRTC client: one audio transceiver, PCMU preferred, echo cancellation on, and the remote track played with `playsinline`. The server answers at `POST /api/voice/calls`. ICE servers come from `GET /api/voice/config`, which also reports `asr` and `tts`.
 
-Speech uses an OpenAI-compatible adapter, with SiliconFlow as the default host. Each call has its own conversation. A transcript goes through the same agent loop as chat, then markdown is stripped before synthesis. About 700 ms of silence ends an utterance. Playback is one 20 ms frame at a time, and the caller can interrupt it.
+Speech recognition defaults to a local Vosk model (`vosk-model-small-cn-0.22`, about 42 MB) in the `vosk` compose service. No API key. The gateway sends each utterance as 16 kHz mono PCM over `HEARTH_VOSK_URL` (default `ws://vosk:2700`). Synthesis defaults to Microsoft Edge voices through the same sidecar (`HEARTH_TTS_PROVIDER=edge`, voice `zh-CN-XiaoxiaoNeural`). Replies are spoken sentence by sentence. Set `HEARTH_TTS_RATE` and `HEARTH_TTS_PITCH` if you want to change them (`+0%`, `+0Hz`).
+
+`install.sh` and `upgrade.sh` download the model into `/var/lib/hearth/vosk` when that directory does not already contain `vosk-model-small-cn-0.22/am`. The default zip is `https://alphacephei.com/vosk/models/vosk-model-small-cn-0.22.zip`. `--mirror cn` uses `https://hf-mirror.com/localstack/vosk-models/resolve/main/vosk-model-small-cn-0.22.zip` and installs Python packages from `https://mirrors.aliyun.com/pypi/simple`. Override either with `HEARTH_VOSK_MODEL_URL` or `PIP_INDEX_URL`. On a host that already has the Aliyun apt mirror or the Tencent image prefix, `upgrade.sh` writes those two lines when they are missing. The sidecar is built from `python:3.12-slim`, capped at 512 MB, and publishes no host ports. The gateway waits until its health check passes.
+
+Pull this revision, then run the new upgrade script. The copy of `upgrade.sh` already on the server does not download the model, and Compose will wait on a sidecar that exits until the model is there:
 
 ```bash
-HEARTH_ASR_PROVIDER=openai
-HEARTH_ASR_BASE_URL=https://api.siliconflow.cn/v1
-HEARTH_ASR_API_KEY=
-HEARTH_ASR_MODEL=FunAudioLLM/SenseVoiceSmall
-HEARTH_TTS_PROVIDER=openai
-HEARTH_TTS_BASE_URL=https://api.siliconflow.cn/v1
-HEARTH_TTS_API_KEY=
-HEARTH_TTS_MODEL=FunAudioLLM/CosyVoice2-0.5B
-HEARTH_TTS_VOICE=FunAudioLLM/CosyVoice2-0.5B:anna
+cd /opt/hearth
+git pull --ff-only
+sudo bash deploy/upgrade.sh
 ```
 
-`HEARTH_ASR_PROVIDER=none` or a missing key leaves recognition off. The page then shows “语音识别/合成未配置” and the server does not play a tone. Aliyun NLS and Tencent adapters can implement the same `transcribe` / `synthesize` interfaces later.
+`HEARTH_ASR_PROVIDER=openai` with `HEARTH_ASR_API_KEY` still uses the hosted transcription API (SiliconFlow by default). `HEARTH_TTS_PROVIDER=openai` does the same for synthesis. `none` turns that side off: `/api/voice/config` returns false, the page shows “语音识别/合成未配置”, and the server plays no tone.
 
 `HEARTH_STUN_URL` is one STUN URL. Leave it empty to gather host candidates only (local tests, and any network where `stun.l.google.com` is blocked). `HEARTH_ICE_SERVERS` is a JSON list of `{ "urls", "username", "credential" }`. `HEARTH_TURN_URL`, `HEARTH_TURN_USERNAME`, and `HEARTH_TURN_PASSWORD` add a TURN server. The gateway also serves `turn:<host>:<port>?transport=tcp` with the same user, so a network that blocks UDP can still place the call. `HEARTH_TURN_TLS=1` adds `turns:<host>:5349?transport=tcp` (`TURN_TLS_PORT`). The browser receives that list, including the TURN credential, because it has to authenticate to the relay.
 

@@ -1,0 +1,33 @@
+# One speech sidecar: Vosk (small Chinese model on a volume) and Edge TTS.
+# HEARTH_IMAGE_PREFIX lets mainland hosts pull python from a Docker Hub mirror.
+ARG HEARTH_IMAGE_PREFIX=
+FROM ${HEARTH_IMAGE_PREFIX}library/python:3.12-slim
+
+ARG APT_MIRROR=
+ARG PIP_INDEX_URL=
+RUN if [ -n "$APT_MIRROR" ]; then \
+      mirror="${APT_MIRROR%/}"; \
+      if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+        sed -i "s#http://deb.debian.org#${mirror}#g; s#https://deb.debian.org#${mirror}#g" /etc/apt/sources.list.d/debian.sources; \
+      fi; \
+      if [ -f /etc/apt/sources.list ]; then \
+        sed -i "s#http://deb.debian.org#${mirror}#g; s#https://deb.debian.org#${mirror}#g" /etc/apt/sources.list; \
+      fi; \
+    fi \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates ffmpeg \
+ && rm -rf /var/lib/apt/lists/*
+
+COPY deploy/speech/requirements.txt /tmp/requirements.txt
+RUN if [ -n "$PIP_INDEX_URL" ]; then \
+      host="$(printf '%s' "$PIP_INDEX_URL" | sed -E 's#https?://([^/:]+).*#\1#')"; \
+      pip install --no-cache-dir -i "$PIP_INDEX_URL" --trusted-host "$host" -r /tmp/requirements.txt; \
+    else \
+      pip install --no-cache-dir -r /tmp/requirements.txt; \
+    fi
+
+COPY deploy/speech/server.py /app/server.py
+ENV VOSK_MODEL=/models/vosk-model-small-cn-0.22
+ENV SPEECH_PORT=2700
+EXPOSE 2700
+CMD ["python", "/app/server.py"]
