@@ -14,5 +14,8 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run lint
+      # dist/ is gitignored. typecheck does not emit, and npm test exits 0
+      # when the glob matches nothing, so compile before test and smoke.
+      - run: npm run build
       - run: npm test
       - run: npm run smoke
