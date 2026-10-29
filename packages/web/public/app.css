@@ -1,0 +1,44 @@
+:root {
+  color-scheme: light;
+  --ink: #1c1915;
+  --muted: #6d645b;
+  --paper: #f6f1e8;
+  --card: #fffdf8;
+  --line: #e4d9c8;
+  --accent: #8a3d24;
+  --ok: #2f6b4f;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: "Avenir Next", "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif;
+  color: var(--ink);
+  background: var(--paper);
+  min-height: 100dvh;
+}
+.top, .tabs, main { padding: 16px; }
+.top { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 1px solid var(--line); }
+.mark { margin: 0; letter-spacing: 0.18em; font-size: 12px; color: var(--accent); }
+h1 { margin: 4px 0 0; font-family: Palatino, "Iowan Old Style", "Songti SC", serif; font-size: 28px; font-weight: 600; }
+button, input, textarea { font: inherit; }
+button { background: var(--ink); color: white; border: 0; border-radius: 999px; padding: 10px 14px; }
+button.ghost { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+.tabs { position: sticky; bottom: 0; display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; background: var(--paper); border-top: 1px solid var(--line); }
+.tabs button { background: transparent; color: var(--muted); }
+.tabs button.active { color: var(--accent); }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 14px; margin-bottom: 12px; }
+label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+input, textarea { width: 100%; border: 1px solid var(--line); background: white; border-radius: 12px; padding: 12px; margin-bottom: 10px; }
+.row { display: flex; gap: 8px; }
+.messages { display: flex; flex-direction: column; gap: 8px; min-height: 40dvh; }
+.bubble { max-width: 85%; padding: 10px 12px; border-radius: 14px; background: white; border: 1px solid var(--line); white-space: pre-wrap; }
+.bubble.user { align-self: flex-end; background: #f3e4d8; }
+.meta { color: var(--muted); font-size: 13px; }
+button.call { width: 100%; min-height: 56px; font-size: 18px; }
+body { padding-bottom: env(safe-area-inset-bottom); }
+.tabs { padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
+@media (min-width: 900px) {
+  main { max-width: 760px; margin: 0 auto; }
+  .top, .tabs { max-width: 760px; margin: 0 auto; }
+}
+

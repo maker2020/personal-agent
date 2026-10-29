@@ -1,0 +1,7 @@
+# Started only with --profile vosk, when DashScope is not configured.
+# The gateway then waits until the local speech sidecar is healthy.
+services:
+  gateway:
+    depends_on:
+      vosk:
+        condition: service_healthy
