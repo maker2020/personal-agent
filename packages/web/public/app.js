@@ -120,7 +120,10 @@ async function phone() {
   const sms = me.sms
     ? ""
     : `<section class="card"><p class="meta">${state.lang === "zh" ? "短信是企业版能力，默认关闭。" : "SMS is an enterprise feature and stays off."}</p></section>`;
-  $("app").innerHTML = `<section class="card"><h2>${t("voice")}</h2><p class="meta">${state.lang === "zh" ? "这是你和自己的助手之间的网络通话，不占用电话号码。" : "This is a network call between you and your own agent. It does not use a phone number."}</p><button id="call" class="call" type="button">${t("startCall")}</button><p id="call-state" class="meta"></p><audio id="remote" autoplay playsinline></audio></section>${pstn}${sms}`;
+  const missing = voice.asr === false || voice.tts === false
+    ? `<p class="meta">${state.lang === "zh" ? "语音识别/合成未配置" : "Speech recognition or synthesis is not configured."}</p>`
+    : "";
+  $("app").innerHTML = `<section class="card"><h2>${t("voice")}</h2><p class="meta">${state.lang === "zh" ? "这是你和自己的助手之间的网络通话，不占用电话号码。" : "This is a network call between you and your own agent. It does not use a phone number."}</p>${missing}<button id="call" class="call" type="button">${t("startCall")}</button><p id="call-state" class="meta"></p><audio id="remote" autoplay playsinline></audio></section>${pstn}${sms}`;
   $("call").onclick = () => toggleCall();
 }
 
@@ -149,7 +152,7 @@ async function toggleCall() {
   }
   pc.ontrack = (event) => {
     const audio = $("remote");
-    audio.srcObject = event.streams[0];
+    audio.srcObject = event.streams[0] || new MediaStream([event.track]);
     audio.play().catch(() => {});
     status.textContent = state.lang === "zh" ? "通话中" : "Live";
   };

@@ -87,6 +87,10 @@ test("in-app webrtc call negotiates PCMU and carries audio", async () => {
     HEARTH_GATEWAY_HOST: "127.0.0.1",
     HEARTH_ADMIN_PASSWORD: "test-pass",
     HEARTH_STUN_URL: "",
+    HEARTH_ASR_PROVIDER: "none",
+    HEARTH_TTS_PROVIDER: "none",
+    HEARTH_ASR_API_KEY: "",
+    HEARTH_TTS_API_KEY: "",
     HEARTH_ROLES: "gateway",
     HEARTH_SENTINEL_POLL_MS: "600000",
     DATABASE_URL: "",
@@ -111,6 +115,9 @@ test("in-app webrtc call negotiates PCMU and carries audio", async () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ username: "owner", password: "test-pass" }),
     }).then((response) => response.json()) as { token: string };
+    const voiceConfig = await fetch(`${running.url}/api/voice/config`, { headers: { authorization: `Bearer ${login.token}` } }).then((response) => response.json()) as { asr: boolean; tts: boolean };
+    assert.equal(voiceConfig.asr, false);
+    assert.equal(voiceConfig.tts, false);
     const answered = await fetch(`${running.url}/api/voice/calls`, {
       method: "POST",
       headers: { authorization: `Bearer ${login.token}`, "content-type": "application/json" },
@@ -139,7 +146,8 @@ test("in-app webrtc call negotiates PCMU and carries audio", async () => {
       headers: { authorization: `Bearer ${login.token}` },
     }).then((response) => response.json()) as { inbound: number; outbound: number };
     assert.ok(stats.inbound > 0, `expected inbound audio, got ${stats.inbound}`);
-    assert.ok(stats.outbound > 0 || received > 0, "expected the agent to send audio back");
+    assert.equal(stats.outbound, 0);
+    assert.equal(received, 0);
   } finally {
     await pc.close();
     await running.close();

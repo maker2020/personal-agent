@@ -11,6 +11,7 @@ export async function runTurn(input: {
   conversationId: string;
   text: string;
   source?: string;
+  systemExtra?: string;
   onToken?: (text: string) => void;
 }): Promise<{ text: string }> {
   await input.store.appendMessage({ conversationId: input.conversationId, role: "user", content: input.source ? `[${input.source}] ${input.text}` : input.text });
@@ -20,7 +21,8 @@ export async function runTurn(input: {
   for (let step = 0; step < 6; step += 1) {
     let text = "";
     const tools: Array<{ id: string; name: string; input: Record<string, unknown> }> = [];
-    for await (const event of input.llm.stream({ system: SYSTEM, messages, tools: TOOL_SPECS })) {
+    const system = input.systemExtra ? `${SYSTEM}\n${input.systemExtra}` : SYSTEM;
+    for await (const event of input.llm.stream({ system, messages, tools: TOOL_SPECS })) {
       if (event.type === "text") {
         text += event.text;
         input.onToken?.(event.text);

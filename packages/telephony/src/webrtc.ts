@@ -18,6 +18,7 @@ export type VoiceRtcOptions = {
   icePortMin?: number;
   icePortMax?: number;
   publicIp?: string;
+  onState?: (state: { ice?: string; connection?: string }) => void;
 };
 
 export async function answerUserVoice(offerSdp: string, onPcm: (pcm: Int16Array) => void, iceServersOrOptions: RTCIceServer[] | VoiceRtcOptions = []): Promise<WebRtcLeg> {
@@ -31,6 +32,11 @@ export async function answerUserVoice(offerSdp: string, onPcm: (pcm: Int16Array)
       : {}),
     ...(options.publicIp ? { iceAdditionalHostAddresses: [options.publicIp] } : {}),
   });
+  if (options.onState) {
+    const report = options.onState;
+    pc.iceConnectionStateChange.subscribe((ice) => report({ ice }));
+    pc.connectionStateChange.subscribe((connection) => report({ connection }));
+  }
   const outbound = new MediaStreamTrack({ kind: "audio" });
   pc.addTrack(outbound);
   pc.onTrack.subscribe((track) => {
@@ -48,22 +54,32 @@ export async function answerUserVoice(offerSdp: string, onPcm: (pcm: Int16Array)
   const sdp = pc.localDescription?.sdp;
   if (!sdp || !/a=rtpmap:0 PCMU\/8000/i.test(sdp)) throw new Error("answer did not negotiate PCMU");
   let sequence = Math.floor(Math.random() * 1000);
-  let timestamp = Math.floor(Math.random() * 1000);
+  const clockStart = Date.now();
+  let timestamp = 0;
+  let lastSentAt = 0;
+  let talking = false;
   return {
     answerSdp: sdp,
     sendPcm(pcm: Int16Array) {
       for (let offset = 0; offset < pcm.length; offset += 160) {
+        const now = Date.now();
+        const wall = Math.floor((now - clockStart) * 8) >>> 0;
+        const gap = lastSentAt > 0 && now - lastSentAt > 30;
+        const marker = !talking || gap;
+        timestamp = lastSentAt === 0 || gap ? wall : (timestamp + 160) >>> 0;
+        lastSentAt = now;
+        talking = true;
         const frame = pcm.subarray(offset, Math.min(offset + 160, pcm.length));
         const payload = pcmToPayload(frame.length === 160 ? frame : padFrame(frame), "PCMU");
         outbound.writeRtp(new RtpPacket(new RtpHeader({
           version: 2,
+          marker,
           payloadType: 0,
           sequenceNumber: sequence & 0xffff,
-          timestamp: timestamp >>> 0,
+          timestamp,
           ssrc: 0x68656172,
         }), payload));
         sequence += 1;
-        timestamp += 160;
       }
     },
     async close() {

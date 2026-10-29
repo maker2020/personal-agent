@@ -10,8 +10,10 @@ test("barge-in cancels playback", async () => {
     reply: async (text) => `echo ${text}`,
     onOutbound: () => undefined,
     onEvent: (event) => events.push(event.type),
-    silenceFrames: 1,
-    frameMs: 5,
+    prerollMs: 0,
+    minSpeechMs: 20,
+    silenceMs: 20,
+    frameMs: 20,
   });
   const loud = Int16Array.from({ length: 160 }, () => 8000);
   const quiet = Int16Array.from({ length: 160 }, () => 0);

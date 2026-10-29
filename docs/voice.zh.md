@@ -4,7 +4,23 @@
 
 ## 应用内通话
 
-登录后打开 **语音**，点通话按钮。页面是移动端 WebRTC 客户端：一条音频，优先 PCMU，开启回声消除，远端音轨用 `playsinline` 播放。服务端在 `POST /api/voice/calls` 应答。ICE 服务器来自 `GET /api/voice/config`。
+登录后打开 **语音**，点通话按钮。页面是移动端 WebRTC 客户端：一条音频，优先 PCMU，开启回声消除，远端音轨用 `playsinline` 播放。服务端在 `POST /api/voice/calls` 应答。ICE 服务器来自 `GET /api/voice/config`，同时返回 `asr` 和 `tts`。
+
+语音走 OpenAI 兼容接口，默认主机是硅基流动。每通电话有自己的会话。识别结果走和文字聊天相同的助手循环，合成前去掉 Markdown。大约 700 毫秒静音结束一句。播放按 20 毫秒一帧送出，对方可以打断。
+
+```bash
+HEARTH_ASR_PROVIDER=openai
+HEARTH_ASR_BASE_URL=https://api.siliconflow.cn/v1
+HEARTH_ASR_API_KEY=
+HEARTH_ASR_MODEL=FunAudioLLM/SenseVoiceSmall
+HEARTH_TTS_PROVIDER=openai
+HEARTH_TTS_BASE_URL=https://api.siliconflow.cn/v1
+HEARTH_TTS_API_KEY=
+HEARTH_TTS_MODEL=FunAudioLLM/CosyVoice2-0.5B
+HEARTH_TTS_VOICE=FunAudioLLM/CosyVoice2-0.5B:anna
+```
+
+`HEARTH_ASR_PROVIDER=none` 或没有密钥时，识别关闭。页面显示「语音识别/合成未配置」，服务端不播放提示音。以后可以按同样的 `transcribe` / `synthesize` 接口接阿里云 NLS 或腾讯云。
 
 `HEARTH_STUN_URL` 是一条 STUN。留空则只收集 host 候选（本机测试，以及 `stun.l.google.com` 被墙的网络）。`HEARTH_ICE_SERVERS` 是 JSON 数组，元素形如 `{ "urls", "username", "credential" }`。也可以用 `HEARTH_TURN_URL`、`HEARTH_TURN_USERNAME`、`HEARTH_TURN_PASSWORD` 追加 TURN。网关会同时下发 `turn:<主机>:<端口>?transport=tcp`，UDP 被封时仍能通话。`HEARTH_TURN_TLS=1` 再增加 `turns:<主机>:5349?transport=tcp`（端口是 `TURN_TLS_PORT`）。浏览器拿到同一份列表，包含 TURN 口令，因为它要向中继认证。
 

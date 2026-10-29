@@ -10,7 +10,7 @@ import { DeepSeekMessages, MockLlm, type LlmClient } from "../../llm/src/index.j
 import { invokeTool, type ToolHost } from "../../tools/src/registry.js";
 import { runTurn } from "../../agent/src/loop.js";
 import { dshVersion, DSH_PIN } from "../../agent/src/dsh.js";
-import { resolveSipConfig, SipUserAgent, TelephonyGateway, VoiceSession, answerUserVoice, validateSipConfig, type WebRtcLeg } from "../../telephony/src/index.js";
+import { resolveSipConfig, SipUserAgent, TelephonyGateway, VoiceSession, answerUserVoice, speechProviders, stripMarkdown, SPOKEN_HINT, SpeechProviderError, validateSipConfig, type WebRtcLeg } from "../../telephony/src/index.js";
 import { ingestInboundSms, sentinelTick } from "../../sentinel/src/loop.js";
 import { Counter, Registry, collectDefaultMetrics } from "prom-client";
 
@@ -68,7 +68,8 @@ export async function startHearth(env: NodeJS.ProcessEnv = process.env): Promise
   if (env.SIP_NUMBER_POOL || env.SIP_SHARED_MAIN) {
     await telephony.seed((env.SIP_NUMBER_POOL ?? "").split(",").filter(Boolean), env.SIP_SHARED_MAIN);
   }
-  const voiceCalls = new Map<string, { inbound: number; outbound: number; leg?: WebRtcLeg }>();
+  const speech = speechProviders(env);
+  const voiceCalls = new Map<string, { inbound: number; outbound: number; leg?: WebRtcLeg; stop?: () => void }>();
 
   const hostFor = async (userId: string): Promise<ToolHost> => {
     const user = await store.findUserById(userId);
@@ -343,28 +344,51 @@ export async function startHearth(env: NodeJS.ProcessEnv = process.env): Promise
   router.add("GET", "/api/voice/config", async (req, res) => {
     const user = await userFrom(req);
     if (!user) return res.status(401).json({ error: "unauthorized" });
-    res.json({ iceServers: config.iceServers, codec: "PCMU" });
+    res.json({ iceServers: config.iceServers, codec: "PCMU", asr: speech.asrEnabled, tts: speech.ttsEnabled });
   });
   router.add("POST", "/api/voice/calls", async (req, res) => {
     const user = await userFrom(req);
     if (!user) return res.status(401).json({ error: "unauthorized" });
     const sdp = String(record(req.body).sdp ?? "");
     const callId = id("voice");
-    const stats = { inbound: 0, outbound: 0, leg: undefined as WebRtcLeg | undefined };
+    const conversation = await store.createConversation({ userId: user.id, title: "语音", kind: "chat" });
+    const stats = { inbound: 0, outbound: 0, leg: undefined as WebRtcLeg | undefined, stop: undefined as (() => void) | undefined };
     let leg: WebRtcLeg | undefined;
+    logger.info("voice call start", { callId, userId: user.id, conversationId: conversation.id, asr: speech.asrEnabled, tts: speech.ttsEnabled });
     const session = new VoiceSession({
-      asr: { transcribe: async (pcm) => (energy(pcm) > 400 ? "你好" : "") },
-      tts: { synthesize: async (text) => tone(Math.max(160, text.length * 8)) },
-      reply: async (text) => `收到 ${text}`,
+      asr: {
+        transcribe: async (pcm, rate) => {
+          if (!speech.asr) return "";
+          try { return await speech.asr.transcribe(pcm, rate); }
+          catch (error) { logger.error("voice asr", providerFields(error)); return ""; }
+        },
+      },
+      tts: {
+        synthesize: async (text) => {
+          if (!speech.tts) return new Int16Array();
+          try { return await speech.tts.synthesize(text); }
+          catch (error) { logger.error("voice tts", providerFields(error)); return new Int16Array(); }
+        },
+      },
+      reply: async (text) => {
+        turns.inc();
+        const result = await runTurn({ store, host: await hostFor(user.id), llm, conversationId: conversation.id, text, systemExtra: SPOKEN_HINT });
+        return stripMarkdown(result.text);
+      },
       onOutbound: (pcm) => {
         stats.outbound += pcm.length;
         leg?.sendPcm(pcm);
       },
-      onEvent: () => undefined,
-      silenceFrames: 2,
-      frameMs: 0,
-      bargeInRms: 500,
+      onEvent: (event) => {
+        if (event.type === "transcript") logger.info("voice utterance", { callId, speechMs: event.speechMs, asrMs: event.asrMs });
+        else if (event.type === "reply") logger.info("voice reply", { callId, llmMs: event.llmMs });
+        else if (event.type === "audio") logger.info("voice audio", { callId, ttsMs: event.ttsMs, samples: event.samples });
+        else if (event.type === "barge-in") logger.info("voice barge-in", { callId });
+        else logger.info("voice skip", { callId, reason: event.reason });
+      },
+      frameMs: 20,
     });
+    stats.stop = () => session.stop();
     try {
       leg = await answerUserVoice(sdp, (pcm) => {
         stats.inbound += pcm.length;
@@ -373,8 +397,10 @@ export async function startHearth(env: NodeJS.ProcessEnv = process.env): Promise
         iceServers: config.iceServers,
         ...(config.icePortMin && config.icePortMax ? { icePortMin: config.icePortMin, icePortMax: config.icePortMax } : {}),
         ...(config.icePublicIp ? { publicIp: config.icePublicIp } : {}),
+        onState: (state) => logger.info("voice state", { callId, ...state, inbound: stats.inbound, outbound: stats.outbound }),
       });
     } catch (error) {
+      logger.error("voice call failed", { callId, error: error instanceof Error ? error.message : "webrtc_failed" });
       res.status(400).json({ error: error instanceof Error ? error.message : "webrtc_failed" });
       return;
     }
@@ -394,8 +420,10 @@ export async function startHearth(env: NodeJS.ProcessEnv = process.env): Promise
     const user = await userFrom(req);
     if (!user) return res.status(401).json({ error: "unauthorized" });
     const call = voiceCalls.get(req.params.id ?? "");
+    call?.stop?.();
     if (call?.leg) await call.leg.close();
     voiceCalls.delete(req.params.id ?? "");
+    logger.info("voice call end", { callId: req.params.id, inbound: call?.inbound ?? 0, outbound: call?.outbound ?? 0 });
     res.json({ ok: true });
   });
   router.add("GET", "/", async (_req, res) => {
@@ -511,16 +539,8 @@ function buildLlm(config: AppConfig): LlmClient {
   return new DeepSeekMessages({ apiKey: config.llm.apiKey, baseUrl: config.llm.baseUrl, model: config.llm.model, thinking: config.llm.thinking, maxTokens: config.llm.maxTokens });
 }
 
-function energy(pcm: Int16Array): number {
-  if (pcm.length === 0) return 0;
-  let sum = 0;
-  for (const sample of pcm) sum += sample * sample;
-  return Math.sqrt(sum / pcm.length);
-}
-
-function tone(length: number): Int16Array {
-  const pcm = new Int16Array(length);
-  for (let i = 0; i < pcm.length; i += 1) pcm[i] = Math.sin(i / 8) * 8000;
-  return pcm;
+function providerFields(error: unknown): { status?: number; error: string } {
+  if (error instanceof SpeechProviderError) return { status: error.status, error: error.message };
+  return { error: error instanceof Error ? error.message : "failed" };
 }
 

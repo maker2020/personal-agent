@@ -4,7 +4,23 @@ English notes are in [the ADR](adr/0007-voice-and-pstn.md). 中文说明见 [voi
 
 ## In-app call
 
-Sign in, open **语音 / Voice**, and tap the call button. The page is a mobile WebRTC client: one audio transceiver, PCMU preferred, echo cancellation on, and the remote track played with `playsinline`. The server answers at `POST /api/voice/calls`. ICE servers come from `GET /api/voice/config`.
+Sign in, open **语音 / Voice**, and tap the call button. The page is a mobile WebRTC client: one audio transceiver, PCMU preferred, echo cancellation on, and the remote track played with `playsinline`. The server answers at `POST /api/voice/calls`. ICE servers come from `GET /api/voice/config`, which also reports `asr` and `tts`.
+
+Speech uses an OpenAI-compatible adapter, with SiliconFlow as the default host. Each call has its own conversation. A transcript goes through the same agent loop as chat, then markdown is stripped before synthesis. About 700 ms of silence ends an utterance. Playback is one 20 ms frame at a time, and the caller can interrupt it.
+
+```bash
+HEARTH_ASR_PROVIDER=openai
+HEARTH_ASR_BASE_URL=https://api.siliconflow.cn/v1
+HEARTH_ASR_API_KEY=
+HEARTH_ASR_MODEL=FunAudioLLM/SenseVoiceSmall
+HEARTH_TTS_PROVIDER=openai
+HEARTH_TTS_BASE_URL=https://api.siliconflow.cn/v1
+HEARTH_TTS_API_KEY=
+HEARTH_TTS_MODEL=FunAudioLLM/CosyVoice2-0.5B
+HEARTH_TTS_VOICE=FunAudioLLM/CosyVoice2-0.5B:anna
+```
+
+`HEARTH_ASR_PROVIDER=none` or a missing key leaves recognition off. The page then shows “语音识别/合成未配置” and the server does not play a tone. Aliyun NLS and Tencent adapters can implement the same `transcribe` / `synthesize` interfaces later.
 
 `HEARTH_STUN_URL` is one STUN URL. Leave it empty to gather host candidates only (local tests, and any network where `stun.l.google.com` is blocked). `HEARTH_ICE_SERVERS` is a JSON list of `{ "urls", "username", "credential" }`. `HEARTH_TURN_URL`, `HEARTH_TURN_USERNAME`, and `HEARTH_TURN_PASSWORD` add a TURN server. The gateway also serves `turn:<host>:<port>?transport=tcp` with the same user, so a network that blocks UDP can still place the call. `HEARTH_TURN_TLS=1` adds `turns:<host>:5349?transport=tcp` (`TURN_TLS_PORT`). The browser receives that list, including the TURN credential, because it has to authenticate to the relay.
 
