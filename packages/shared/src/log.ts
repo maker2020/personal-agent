@@ -13,8 +13,10 @@ export type Logger = {
 function redact(value: unknown, depth = 0): unknown {
   if (depth > 6 || value == null) return value;
   if (typeof value === "string") {
-    if (value.length > 24 && /^(sk-|AKIA|LTAI)/.test(value)) return "[redacted]";
-    return value.length > 2000 ? `${value.slice(0, 2000)}…` : value;
+    const scrubbed = value
+      .replace(/sk-[A-Za-z0-9_-]{8,}/g, "[redacted]")
+      .replace(/\b(AKIA|LTAI)[A-Za-z0-9]{8,}/g, "[redacted]");
+    return scrubbed.length > 2000 ? `${scrubbed.slice(0, 2000)}…` : scrubbed;
   }
   if (typeof value !== "object") return value;
   if (Array.isArray(value)) return value.slice(0, 40).map((item) => redact(item, depth + 1));

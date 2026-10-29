@@ -6,11 +6,13 @@
 
 登录后打开 **语音**，点通话按钮。页面是移动端 WebRTC 客户端：一条音频，优先 PCMU，开启回声消除，远端音轨用 `playsinline` 播放。服务端在 `POST /api/voice/calls` 应答。ICE 服务器来自 `GET /api/voice/config`，同时返回 `asr` 和 `tts`。
 
-语音识别默认是本机 Vosk，模型 `vosk-model-small-cn-0.22`（约 42 MB），不需要密钥，跑在 compose 的 `vosk` 服务里。网关把每一句转成 16 kHz 单声道 PCM，发到 `HEARTH_VOSK_URL`（默认 `ws://vosk:2700`）。合成默认用微软 Edge 语音，同一个容器，`HEARTH_TTS_PROVIDER=edge`，声音 `zh-CN-XiaoxiaoNeural`。回答按句子合成，第一句先播放。语速和音高是 `HEARTH_TTS_RATE`、`HEARTH_TTS_PITCH`（`+0%`、`+0Hz`）。
+语音识别和合成默认走阿里云百炼（DashScope），共用 `HEARTH_DASHSCOPE_API_KEY`。识别模型是 `paraformer-realtime-8k-v2`，8 kHz PCM，WebRTC 的 PCMU 不用重采样。通话期间套接字保持打开，服务端 `sentence_end` 为一句结束并开始回答；本地能量检测是备用，对方插话时仍然打断。合成模型是 `cosyvoice-v2`，声音 `longxiaochun_v2`，PCM 8000 Hz，按句返回。WebSocket 默认 `wss://dashscope.aliyuncs.com/api-ws/v1/inference`（`HEARTH_DASHSCOPE_WS_URL`）。这个地址仍然可用。有工作空间 ID 时可以改成 `wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference`。
 
-`install.sh` 和 `upgrade.sh` 在 `/var/lib/hearth/vosk` 里还没有 `vosk-model-small-cn-0.22/am` 时下载模型。默认地址是 `https://alphacephei.com/vosk/models/vosk-model-small-cn-0.22.zip`。`--mirror cn` 改用 `https://hf-mirror.com/localstack/vosk-models/resolve/main/vosk-model-small-cn-0.22.zip`，pip 走 `https://mirrors.aliyun.com/pypi/simple`。可以用 `HEARTH_VOSK_MODEL_URL` 或 `PIP_INDEX_URL` 换成别的镜像。已经写了阿里云 apt 镜像或腾讯云镜像前缀的机器，`upgrade.sh` 会在这两行还不存在时补上。这个服务从 `python:3.12-slim` 构建，内存限制 512 MB，不映射宿主机端口。网关等它的健康检查通过才启动。
+没有密钥，或者 DashScope 返回错误时，网关改用本机 Vosk 和微软 Edge（`zh-CN-XiaoxiaoNeural`），并写一条日志。日志里没有密钥。`GET /api/voice/config` 返回 `asr`、`tts`、`asrProvider`、`ttsProvider`。设成 `none` 就关闭这一侧，页面显示「语音识别/合成未配置」。
 
-先拉下这一版，再跑新的升级脚本。服务器上原来的 `upgrade.sh` 不会下载模型，模型没到位时 Compose 会一直等这个容器：
+`vosk` 服务在 compose profile `vosk` 里。设置了 `HEARTH_DASHSCOPE_API_KEY`，并且没有把识别或合成固定成 `vosk` / `edge` 时，这个容器不会启动，内存就留给别的服务。只有走本机回退时，`install.sh` 和 `upgrade.sh` 才下载 `vosk-model-small-cn-0.22`。压缩包必须是官方文件 `https://alphacephei.com/vosk/models/vosk-model-small-cn-0.22.zip`，大小正好 43898754 字节。`--mirror cn` 仍然让构建镜像时的 pip 走 `https://mirrors.aliyun.com/pypi/simple`。这个服务不映射宿主机端口，内存限制 512 MB。
+
+已经在跑的机器，把密钥写进 `.env`，两个 provider 都设成 `dashscope`，再升级。服务器上原来的 `upgrade.sh` 不认识这个 profile，所以先拉取：
 
 ```bash
 cd /opt/hearth
@@ -18,7 +20,7 @@ git pull --ff-only
 sudo bash deploy/upgrade.sh
 ```
 
-`HEARTH_ASR_PROVIDER=openai` 且设置了 `HEARTH_ASR_API_KEY` 时，仍走托管识别接口（默认硅基流动）。合成同理，`HEARTH_TTS_PROVIDER=openai`。设成 `none` 就关闭这一侧：`/api/voice/config` 返回 false，页面显示「语音识别/合成未配置」，服务端不播放提示音。
+`HEARTH_ASR_PROVIDER=openai` 且设置了 `HEARTH_ASR_API_KEY` 时，仍走兼容 OpenAI 的识别接口（默认硅基流动）。合成同理，`HEARTH_TTS_PROVIDER=openai`。
 
 `HEARTH_STUN_URL` 是一条 STUN。留空则只收集 host 候选（本机测试，以及 `stun.l.google.com` 被墙的网络）。`HEARTH_ICE_SERVERS` 是 JSON 数组，元素形如 `{ "urls", "username", "credential" }`。也可以用 `HEARTH_TURN_URL`、`HEARTH_TURN_USERNAME`、`HEARTH_TURN_PASSWORD` 追加 TURN。网关会同时下发 `turn:<主机>:<端口>?transport=tcp`，UDP 被封时仍能通话。`HEARTH_TURN_TLS=1` 再增加 `turns:<主机>:5349?transport=tcp`（端口是 `TURN_TLS_PORT`）。浏览器拿到同一份列表，包含 TURN 口令，因为它要向中继认证。
 

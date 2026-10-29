@@ -12,7 +12,22 @@ hearth_prepare_speech_env() {
     return 0
   fi
   hearth_append_env "$file" PIP_INDEX_URL "https://mirrors.aliyun.com/pypi/simple"
-  hearth_append_env "$file" HEARTH_VOSK_MODEL_URL "https://hf-mirror.com/localstack/vosk-models/resolve/main/vosk-model-small-cn-0.22.zip"
+}
+
+# The hf-mirror localstack zip is a third-party copy. Keep the official archive.
+hearth_use_official_vosk_url() {
+  local file="${1:-.env}"
+  [[ -f "$file" ]] || return 0
+  local current official third tmp
+  official="https://alphacephei.com/vosk/models/vosk-model-small-cn-0.22.zip"
+  third="https://hf-mirror.com/localstack/vosk-models/resolve/main/vosk-model-small-cn-0.22.zip"
+  current="$(grep -E '^HEARTH_VOSK_MODEL_URL=' "$file" | head -n 1 | cut -d= -f2- || true)"
+  if [[ "$current" != "$third" ]]; then
+    return 0
+  fi
+  tmp="$(mktemp)"
+  awk -v url="$official" 'BEGIN{FS=OFS="="} $1=="HEARTH_VOSK_MODEL_URL" {$0="HEARTH_VOSK_MODEL_URL=" url} {print}' "$file" > "$tmp"
+  mv "$tmp" "$file"
 }
 
 hearth_append_env() {
@@ -59,7 +74,12 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
     grep -E "^${key}=" .env | head -n 1 | cut -d= -f2- || true
   }
   hearth_prepare_speech_env "$ROOT/.env"
-  hearth_fetch_vosk_model "$(env_get HEARTH_VOSK_MODEL_DIR)" "$(env_get HEARTH_VOSK_MODEL_URL)"
+  hearth_use_official_vosk_url "$ROOT/.env"
+  if hearth_local_speech_needed "$ROOT/.env"; then
+    hearth_fetch_vosk_model "$(env_get HEARTH_VOSK_MODEL_DIR)" "$(env_get HEARTH_VOSK_MODEL_URL)"
+  else
+    echo "hearth-upgrade: DashScope is configured; the Vosk sidecar stays stopped"
+  fi
   docker build -f Dockerfile.sandbox \
     --build-arg "HEARTH_IMAGE_PREFIX=$(env_get HEARTH_IMAGE_PREFIX)" \
     --build-arg "APT_MIRROR=$(env_get HEARTH_APT_MIRROR)" \

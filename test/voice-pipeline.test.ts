@@ -111,19 +111,30 @@ test("openai speech adapter posts wav audio and reads 8 kHz pcm", async () => {
   });
 });
 
-test("defaults are local vosk and edge, and openai stays optional", async () => {
+test("a missing DashScope key uses Vosk and Edge, and openai stays optional", async () => {
   const defaults = speechProviders({});
+  assert.equal(defaults.asrProvider, "vosk");
+  assert.equal(defaults.ttsProvider, "edge");
   assert.equal(defaults.asrEnabled, true);
   assert.equal(defaults.ttsEnabled, true);
+  assert.match(defaults.notes.join("\n"), /HEARTH_DASHSCOPE_API_KEY/);
   assert.equal(speechProviders({ HEARTH_ASR_PROVIDER: "none" }).asrEnabled, false);
   assert.equal(speechProviders({ HEARTH_TTS_PROVIDER: "none" }).ttsEnabled, false);
   assert.equal(speechProviders({ HEARTH_ASR_PROVIDER: "openai" }).asrEnabled, false);
   assert.equal(speechProviders({ HEARTH_ASR_PROVIDER: "openai", HEARTH_ASR_API_KEY: "k" }).asrEnabled, true);
+  const keyed = speechProviders({ HEARTH_DASHSCOPE_API_KEY: "sk-present-not-logged" });
+  assert.equal(keyed.asrProvider, "dashscope");
+  assert.equal(keyed.ttsProvider, "dashscope");
+  assert.equal(keyed.notes.join("\n").includes("sk-present-not-logged"), false);
   assert.equal(stripMarkdown("**你好** [链接](https://example.com)"), "你好 链接");
   const compose = await readFile("docker-compose.yml", "utf8");
   assert.match(compose, /mem_limit: 512m/);
+  assert.match(compose, /profiles: \["vosk"\]/);
+  assert.match(compose, /paraformer-realtime-8k-v2/);
   assert.match(compose, /HEARTH_VOSK_URL: \$\{HEARTH_VOSK_URL:-ws:\/\/vosk:2700\}/);
   assert.equal(compose.includes("2700:2700"), false);
+  const gateway = compose.slice(compose.indexOf("\n  gateway:"));
+  assert.equal(gateway.includes("\n      vosk:"), false);
 });
 
 test("vosk websocket and edge http adapters", async () => {

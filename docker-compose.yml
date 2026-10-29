@@ -50,6 +50,7 @@ services:
     restart: unless-stopped
 
   vosk:
+    profiles: ["vosk"]
     build:
       context: .
       dockerfile: Dockerfile.speech
@@ -94,9 +95,13 @@ services:
       HEARTH_RTC_PORT_MAX: ${HEARTH_RTC_PORT_MAX:-50049}
       HEARTH_TURN_TLS: ${HEARTH_TURN_TLS:-0}
       TURN_TLS_PORT: ${TURN_TLS_PORT:-5349}
-      HEARTH_ASR_PROVIDER: ${HEARTH_ASR_PROVIDER:-vosk}
+      HEARTH_ASR_PROVIDER: ${HEARTH_ASR_PROVIDER:-dashscope}
+      HEARTH_TTS_PROVIDER: ${HEARTH_TTS_PROVIDER:-dashscope}
+      HEARTH_DASHSCOPE_ASR_MODEL: ${HEARTH_DASHSCOPE_ASR_MODEL:-paraformer-realtime-8k-v2}
+      HEARTH_DASHSCOPE_TTS_MODEL: ${HEARTH_DASHSCOPE_TTS_MODEL:-cosyvoice-v2}
+      HEARTH_DASHSCOPE_TTS_VOICE: ${HEARTH_DASHSCOPE_TTS_VOICE:-longxiaochun_v2}
+      HEARTH_DASHSCOPE_WS_URL: ${HEARTH_DASHSCOPE_WS_URL:-wss://dashscope.aliyuncs.com/api-ws/v1/inference}
       HEARTH_VOSK_URL: ${HEARTH_VOSK_URL:-ws://vosk:2700}
-      HEARTH_TTS_PROVIDER: ${HEARTH_TTS_PROVIDER:-edge}
       HEARTH_TTS_URL: ${HEARTH_TTS_URL:-http://vosk:2700/tts}
       HEARTH_TTS_VOICE: ${HEARTH_TTS_VOICE:-zh-CN-XiaoxiaoNeural}
       HEARTH_TTS_RATE: ${HEARTH_TTS_RATE:-}
@@ -109,8 +114,6 @@ services:
       postgres:
         condition: service_healthy
       sandbox:
-        condition: service_healthy
-      vosk:
         condition: service_healthy
     ports:
       - "${HEARTH_HTTP_BIND:-127.0.0.1}:${HEARTH_HTTP_PORT:-8787}:8787"

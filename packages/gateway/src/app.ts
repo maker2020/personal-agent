@@ -68,7 +68,7 @@ export async function startHearth(env: NodeJS.ProcessEnv = process.env): Promise
   if (env.SIP_NUMBER_POOL || env.SIP_SHARED_MAIN) {
     await telephony.seed((env.SIP_NUMBER_POOL ?? "").split(",").filter(Boolean), env.SIP_SHARED_MAIN);
   }
-  const speech = speechProviders(env);
+  const speech = speechProviders(env, (message) => logger.warn("voice provider", { error: message }));
   const voiceCalls = new Map<string, { inbound: number; outbound: number; leg?: WebRtcLeg; stop?: () => void }>();
 
   const hostFor = async (userId: string): Promise<ToolHost> => {
@@ -344,7 +344,7 @@ export async function startHearth(env: NodeJS.ProcessEnv = process.env): Promise
   router.add("GET", "/api/voice/config", async (req, res) => {
     const user = await userFrom(req);
     if (!user) return res.status(401).json({ error: "unauthorized" });
-    res.json({ iceServers: config.iceServers, codec: "PCMU", asr: speech.asrEnabled, tts: speech.ttsEnabled });
+    res.json({ iceServers: config.iceServers, codec: "PCMU", asr: speech.asrEnabled, tts: speech.ttsEnabled, asrProvider: speech.asrProvider, ttsProvider: speech.ttsProvider });
   });
   router.add("POST", "/api/voice/calls", async (req, res) => {
     const user = await userFrom(req);

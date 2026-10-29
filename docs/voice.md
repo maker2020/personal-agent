@@ -6,11 +6,13 @@ English notes are in [the ADR](adr/0007-voice-and-pstn.md). 中文说明见 [voi
 
 Sign in, open **语音 / Voice**, and tap the call button. The page is a mobile WebRTC client: one audio transceiver, PCMU preferred, echo cancellation on, and the remote track played with `playsinline`. The server answers at `POST /api/voice/calls`. ICE servers come from `GET /api/voice/config`, which also reports `asr` and `tts`.
 
-Speech recognition defaults to a local Vosk model (`vosk-model-small-cn-0.22`, about 42 MB) in the `vosk` compose service. No API key. The gateway sends each utterance as 16 kHz mono PCM over `HEARTH_VOSK_URL` (default `ws://vosk:2700`). Synthesis defaults to Microsoft Edge voices through the same sidecar (`HEARTH_TTS_PROVIDER=edge`, voice `zh-CN-XiaoxiaoNeural`). Replies are spoken sentence by sentence. Set `HEARTH_TTS_RATE` and `HEARTH_TTS_PITCH` if you want to change them (`+0%`, `+0Hz`).
+Speech recognition and synthesis default to Alibaba Cloud Bailian (DashScope) with one key, `HEARTH_DASHSCOPE_API_KEY`. Recognition uses `paraformer-realtime-8k-v2` at 8 kHz PCM, so WebRTC PCMU is forwarded without resampling. The socket stays open for the call. A `sentence_end` result starts the reply; local voice activity is the backup and still cuts in when the caller talks over the agent. Synthesis uses `cosyvoice-v2`, voice `longxiaochun_v2`, PCM at 8000 Hz, one sentence at a time. The WebSocket URL defaults to `wss://dashscope.aliyuncs.com/api-ws/v1/inference` (`HEARTH_DASHSCOPE_WS_URL`). That host still works. A workspace endpoint such as `wss://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api-ws/v1/inference` can be set when you have a workspace id.
 
-`install.sh` and `upgrade.sh` download the model into `/var/lib/hearth/vosk` when that directory does not already contain `vosk-model-small-cn-0.22/am`. The default zip is `https://alphacephei.com/vosk/models/vosk-model-small-cn-0.22.zip`. `--mirror cn` uses `https://hf-mirror.com/localstack/vosk-models/resolve/main/vosk-model-small-cn-0.22.zip` and installs Python packages from `https://mirrors.aliyun.com/pypi/simple`. Override either with `HEARTH_VOSK_MODEL_URL` or `PIP_INDEX_URL`. On a host that already has the Aliyun apt mirror or the Tencent image prefix, `upgrade.sh` writes those two lines when they are missing. The sidecar is built from `python:3.12-slim`, capped at 512 MB, and publishes no host ports. The gateway waits until its health check passes.
+Without a key, or when DashScope returns an error, the gateway uses local Vosk and Microsoft Edge (`zh-CN-XiaoxiaoNeural`) and logs the fallback. The log line does not include the key. `GET /api/voice/config` returns `asr`, `tts`, `asrProvider`, and `ttsProvider`. `none` turns that side off and the page shows “语音识别/合成未配置”.
 
-Pull this revision, then run the new upgrade script. The copy of `upgrade.sh` already on the server does not download the model, and Compose will wait on a sidecar that exits until the model is there:
+The `vosk` compose service is behind the `vosk` profile and is not started when `HEARTH_DASHSCOPE_API_KEY` is set and neither provider is pinned to `vosk` or `edge`. That leaves the sidecar's memory unused. `install.sh` and `upgrade.sh` download `vosk-model-small-cn-0.22` only in that no-key case. The zip must be the official archive, `https://alphacephei.com/vosk/models/vosk-model-small-cn-0.22.zip`, exactly 43898754 bytes. `--mirror cn` still points pip at `https://mirrors.aliyun.com/pypi/simple` for the image build. The sidecar publishes no host ports and is capped at 512 MB.
+
+On a host that already has this stack, put the key in `.env`, set both providers to `dashscope`, then upgrade. The previous `upgrade.sh` does not know the profile, so pull first:
 
 ```bash
 cd /opt/hearth
@@ -18,7 +20,7 @@ git pull --ff-only
 sudo bash deploy/upgrade.sh
 ```
 
-`HEARTH_ASR_PROVIDER=openai` with `HEARTH_ASR_API_KEY` still uses the hosted transcription API (SiliconFlow by default). `HEARTH_TTS_PROVIDER=openai` does the same for synthesis. `none` turns that side off: `/api/voice/config` returns false, the page shows “语音识别/合成未配置”, and the server plays no tone.
+`HEARTH_ASR_PROVIDER=openai` with `HEARTH_ASR_API_KEY` still uses an OpenAI-compatible transcription API (SiliconFlow by default). `HEARTH_TTS_PROVIDER=openai` does the same for synthesis.
 
 `HEARTH_STUN_URL` is one STUN URL. Leave it empty to gather host candidates only (local tests, and any network where `stun.l.google.com` is blocked). `HEARTH_ICE_SERVERS` is a JSON list of `{ "urls", "username", "credential" }`. `HEARTH_TURN_URL`, `HEARTH_TURN_USERNAME`, and `HEARTH_TURN_PASSWORD` add a TURN server. The gateway also serves `turn:<host>:<port>?transport=tcp` with the same user, so a network that blocks UDP can still place the call. `HEARTH_TURN_TLS=1` adds `turns:<host>:5349?transport=tcp` (`TURN_TLS_PORT`). The browser receives that list, including the TURN credential, because it has to authenticate to the relay.
 

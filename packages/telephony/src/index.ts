@@ -4,7 +4,7 @@ export { digestAuthorization, md5 } from "./digest.js";
 export { resolveSipConfig, validateSipConfig, ALIYUN_REGIONS, ALIYUN_SIP_CODES, type SipConfig, type TrunkMode } from "./preset.js";
 export { SipUserAgent } from "./ua.js";
 export { VoiceSession, rms, SPOKEN_HINT, type VoiceEvent } from "./voice.js";
-export { speechProviders, stripMarkdown, SpeechProviderError, VoskTranscription, EdgeSpeech, type SpeechRecognizer, type SpeechSynthesizer } from "./providers.js";
+export { speechProviders, stripMarkdown, SpeechProviderError, VoskTranscription, EdgeSpeech, DashscopeAsr, DashscopeTts, type SpeechRecognizer, type SpeechSynthesizer, type SpeechSetup } from "./providers.js";
 export { TelephonyGateway, type TrunkDialer, type PlaceCallInput, type PlaceCallResult } from "./gateway.js";
 export { evaluateCompliance, shanghaiHour, type CallPurpose } from "./compliance.js";
 export { answerUserVoice, offerRequestsAudio } from "./webrtc.js";

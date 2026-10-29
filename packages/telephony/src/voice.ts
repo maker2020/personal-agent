@@ -32,10 +32,17 @@ export class VoiceSession {
   private ignored = 0;
   private noise = 50;
   private generation = 0;
+  private live: { push: (pcm: Int16Array, sampleRate: number) => void; stop: () => void } | undefined;
+  private liveFailed = false;
+  private remoteHandled = false;
+  private backupTimer: NodeJS.Timeout | undefined;
 
   constructor(private opts: {
-    asr: { transcribe: (pcm: Int16Array, sampleRate: number) => Promise<string> };
-    tts: { synthesize: (text: string) => Promise<Int16Array> };
+    asr: {
+      transcribe: (pcm: Int16Array, sampleRate: number) => Promise<string>;
+      openCall?: (handlers: { onSentence: (text: string) => void; onError: (error: Error) => void }) => Promise<{ push: (pcm: Int16Array, sampleRate: number) => void; stop: () => void }>;
+    };
+    tts: { synthesize: (text: string, onChunk?: (pcm: Int16Array) => void | Promise<void>) => Promise<Int16Array> };
     reply: (text: string) => Promise<string>;
     onOutbound: (pcm: Int16Array) => void;
     onEvent: (event: VoiceEvent) => void;
@@ -44,9 +51,20 @@ export class VoiceSession {
     minSpeechMs?: number;
     maxUtteranceMs?: number;
     prerollMs?: number;
+    backupMs?: number;
     sampleRate?: number;
     frameMs?: number;
-  }) {}
+  }) {
+    if (opts.asr.openCall) {
+      void opts.asr.openCall({
+        onSentence: (text) => this.onRemoteSentence(text),
+        onError: () => { this.liveFailed = true; this.live = undefined; },
+      }).then((call) => {
+        if (this.liveFailed) { call.stop(); return; }
+        this.live = call;
+      }).catch(() => { this.liveFailed = true; });
+    }
+  }
 
   pushInbound(pcm: Int16Array): void {
     const sampleRate = this.opts.sampleRate ?? 8000;
@@ -59,6 +77,9 @@ export class VoiceSession {
       if (skip >= audio.length) return;
       audio = audio.subarray(skip);
     }
+    const energy = rms(audio);
+    const threshold = Math.max(this.opts.floorRms ?? 500, this.noise * 3);
+    if (this.live && !this.liveFailed && (!this.speaking || energy >= threshold)) this.live.push(audio, sampleRate);
     this.consume(audio, sampleRate);
   }
 
@@ -66,6 +87,9 @@ export class VoiceSession {
     this.generation += 1;
     this.cancelTts = true;
     this.speaking = false;
+    if (this.backupTimer) clearTimeout(this.backupTimer);
+    this.live?.stop();
+    this.live = undefined;
     this.resetUtterance();
   }
 
@@ -82,6 +106,7 @@ export class VoiceSession {
     }
     if (this.speaking) return;
     if (energy >= threshold) {
+      if (!this.speech) this.remoteHandled = false;
       this.speech = true;
       this.speechMs += duration;
       this.silenceMs = 0;
@@ -106,7 +131,25 @@ export class VoiceSession {
       this.opts.onEvent({ type: "skip", reason: "short" });
       return;
     }
+    if (this.live && !this.liveFailed) {
+      this.backupTimer = setTimeout(() => {
+        if (this.remoteHandled) return;
+        void this.finish(audio, speechMs);
+      }, this.opts.backupMs ?? 600);
+      return;
+    }
     void this.finish(audio, speechMs);
+  }
+
+  private onRemoteSentence(text: string): void {
+    const clean = text.trim();
+    if (!clean || this.remoteHandled) return;
+    this.remoteHandled = true;
+    if (this.backupTimer) clearTimeout(this.backupTimer);
+    this.resetUtterance();
+    const generation = ++this.generation;
+    this.opts.onEvent({ type: "transcript", text: clean, speechMs: 0, asrMs: 0 });
+    void this.speak(clean, generation);
   }
 
   private async finish(audio: Int16Array, speechMs: number): Promise<void> {
@@ -123,6 +166,10 @@ export class VoiceSession {
       return;
     }
     this.opts.onEvent({ type: "transcript", text, speechMs, asrMs });
+    await this.speak(text, generation);
+  }
+
+  private async speak(text: string, generation: number): Promise<void> {
     const llmStarted = Date.now();
     const reply = (await this.opts.reply(text)).trim();
     const llmMs = Date.now() - llmStarted;
@@ -136,12 +183,18 @@ export class VoiceSession {
     for (const sentence of splitSentences(reply)) {
       if (this.cancelTts || generation !== this.generation) break;
       const ttsStarted = Date.now();
-      const pcm = await this.opts.tts.synthesize(sentence);
-      const ttsMs = Date.now() - ttsStarted;
+      let streamed = false;
+      const pcm = await this.opts.tts.synthesize(sentence, async (chunk) => {
+        if (this.cancelTts || generation !== this.generation || chunk.length === 0) return;
+        if (!streamed) this.opts.onEvent({ type: "audio", ttsMs: Date.now() - ttsStarted, samples: chunk.length });
+        streamed = true;
+        await this.play(chunk, generation);
+      });
       if (this.cancelTts || generation !== this.generation) break;
-      this.opts.onEvent({ type: "audio", ttsMs, samples: pcm.length });
-      if (pcm.length === 0) continue;
-      await this.play(pcm, generation);
+      if (!streamed && pcm.length > 0) {
+        this.opts.onEvent({ type: "audio", ttsMs: Date.now() - ttsStarted, samples: pcm.length });
+        await this.play(pcm, generation);
+      }
     }
     if (generation === this.generation) this.speaking = false;
   }

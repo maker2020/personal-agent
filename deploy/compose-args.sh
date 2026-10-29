@@ -41,4 +41,33 @@ hearth_compose_arguments() {
   if [[ "$turn" == "1" ]]; then
     printf '%s\n' --profile turn
   fi
+  if hearth_local_speech_needed "$env_file"; then
+    printf '%s\n' -f "$root/docker-compose.vosk.yml"
+    printf '%s\n' --profile vosk
+  fi
+}
+
+# The Vosk sidecar is the no-key fallback. A DashScope key leaves it stopped.
+hearth_local_speech_needed() {
+  local file="$1"
+  local asr tts key
+  asr="$(hearth_env_value "$file" HEARTH_ASR_PROVIDER)"
+  tts="$(hearth_env_value "$file" HEARTH_TTS_PROVIDER)"
+  key="$(hearth_env_value "$file" HEARTH_DASHSCOPE_API_KEY)"
+  if [[ "$asr" == "vosk" || "$tts" == "edge" ]]; then
+    return 0
+  fi
+  if [[ "$asr" == "none" && ( "$tts" == "none" || "$tts" == "openai" ) ]]; then
+    return 1
+  fi
+  if [[ "$tts" == "none" && "$asr" == "openai" ]]; then
+    return 1
+  fi
+  if [[ "$asr" == "openai" && "$tts" == "openai" ]]; then
+    return 1
+  fi
+  if [[ -n "$key" ]]; then
+    return 1
+  fi
+  return 0
 }

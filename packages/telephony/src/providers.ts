@@ -1,18 +1,9 @@
 import WebSocket from "ws";
+import { DEFAULT_ASR_MODEL, DEFAULT_DASHSCOPE_WS, DEFAULT_TTS_MODEL, DEFAULT_TTS_VOICE, DashscopeAsr, DashscopeTts } from "./dashscope.js";
+import { SpeechProviderError, pcmFromBytes, pcmToWav, redactSecret, resampleLinear, type SpeechCall, type SpeechRecognizer, type SpeechSynthesizer } from "./speech-util.js";
 
-export interface SpeechRecognizer {
-  transcribe(pcm: Int16Array, sampleRate: number): Promise<string>;
-}
-
-export interface SpeechSynthesizer {
-  synthesize(text: string): Promise<Int16Array>;
-}
-
-export class SpeechProviderError extends Error {
-  constructor(readonly status: number, message: string) {
-    super(message);
-  }
-}
+export { SpeechProviderError, pcmFromBytes, pcmToWav, redactSecret, resampleLinear, stripMarkdown, type SpeechCall, type SpeechRecognizer, type SpeechSynthesizer } from "./speech-util.js";
+export { DashscopeAsr, DashscopeTts } from "./dashscope.js";
 
 export type OpenAiSpeechOptions = {
   baseUrl: string;
@@ -26,49 +17,153 @@ const SILICONFLOW = "https://api.siliconflow.cn/v1";
 const DEFAULT_VOSK_URL = "ws://vosk:2700";
 const DEFAULT_EDGE_URL = "http://vosk:2700/tts";
 
-export function speechProviders(env: NodeJS.ProcessEnv): { asr?: SpeechRecognizer; tts?: SpeechSynthesizer; asrEnabled: boolean; ttsEnabled: boolean } {
-  const asrProvider = asrChoice(env);
-  const ttsProvider = ttsChoice(env);
-  const asrEnabled = asrProvider === "vosk" || (asrProvider === "openai" && Boolean(env.HEARTH_ASR_API_KEY));
-  const ttsEnabled = ttsProvider === "edge" || (ttsProvider === "openai" && Boolean(env.HEARTH_TTS_API_KEY));
-  return {
-    asrEnabled,
-    ttsEnabled,
-    ...(asrEnabled && asrProvider === "vosk" ? { asr: new VoskTranscription({ url: env.HEARTH_VOSK_URL || DEFAULT_VOSK_URL }) } : {}),
-    ...(asrEnabled && asrProvider === "openai" ? { asr: new OpenAiTranscription({
-      baseUrl: env.HEARTH_ASR_BASE_URL || SILICONFLOW,
-      apiKey: env.HEARTH_ASR_API_KEY ?? "",
-      model: env.HEARTH_ASR_MODEL || "FunAudioLLM/SenseVoiceSmall",
-    }) } : {}),
-    ...(ttsEnabled && ttsProvider === "edge" ? { tts: new EdgeSpeech({
-      url: env.HEARTH_TTS_URL || DEFAULT_EDGE_URL,
-      voice: env.HEARTH_TTS_VOICE || "zh-CN-XiaoxiaoNeural",
-      rate: env.HEARTH_TTS_RATE || "+0%",
-      pitch: env.HEARTH_TTS_PITCH || "+0Hz",
-    }) } : {}),
-    ...(ttsEnabled && ttsProvider === "openai" ? { tts: new OpenAiSpeech({
-      baseUrl: env.HEARTH_TTS_BASE_URL || SILICONFLOW,
-      apiKey: env.HEARTH_TTS_API_KEY ?? "",
-      model: env.HEARTH_TTS_MODEL || "FunAudioLLM/CosyVoice2-0.5B",
-      voice: env.HEARTH_TTS_VOICE || "FunAudioLLM/CosyVoice2-0.5B:anna",
-    }) } : {}),
+export type SpeechProviderName = "dashscope" | "vosk" | "openai" | "edge" | "none";
+
+export type SpeechSetup = {
+  asr?: SpeechRecognizer;
+  tts?: SpeechSynthesizer;
+  asrEnabled: boolean;
+  ttsEnabled: boolean;
+  asrProvider: SpeechProviderName;
+  ttsProvider: SpeechProviderName;
+  notes: string[];
+};
+
+export function speechProviders(env: NodeJS.ProcessEnv, warn?: (message: string) => void): SpeechSetup {
+  const notes: string[] = [];
+  const asrChoice = providerChoice(env.HEARTH_ASR_PROVIDER, ["none", "openai", "vosk", "dashscope"], "dashscope");
+  const ttsChoice = providerChoice(env.HEARTH_TTS_PROVIDER, ["none", "openai", "edge", "dashscope"], "dashscope");
+  const key = env.HEARTH_DASHSCOPE_API_KEY ?? "";
+  const vosk = new VoskTranscription({ url: env.HEARTH_VOSK_URL || DEFAULT_VOSK_URL });
+  const edge = new EdgeSpeech({
+    url: env.HEARTH_TTS_URL || DEFAULT_EDGE_URL,
+    voice: env.HEARTH_TTS_VOICE || "zh-CN-XiaoxiaoNeural",
+    rate: env.HEARTH_TTS_RATE || "+0%",
+    pitch: env.HEARTH_TTS_PITCH || "+0Hz",
+  });
+  const dashAsr = key ? new DashscopeAsr({
+    url: env.HEARTH_DASHSCOPE_WS_URL || DEFAULT_DASHSCOPE_WS,
+    apiKey: key,
+    model: env.HEARTH_DASHSCOPE_ASR_MODEL || DEFAULT_ASR_MODEL,
+  }) : undefined;
+  const dashTts = key ? new DashscopeTts({
+    url: env.HEARTH_DASHSCOPE_WS_URL || DEFAULT_DASHSCOPE_WS,
+    apiKey: key,
+    model: env.HEARTH_DASHSCOPE_TTS_MODEL || DEFAULT_TTS_MODEL,
+    voice: env.HEARTH_DASHSCOPE_TTS_VOICE || DEFAULT_TTS_VOICE,
+  }) : undefined;
+  const report = (message: string) => {
+    const safe = redactSecret(message, key);
+    notes.push(safe);
+    warn?.(safe);
   };
+  let asr: SpeechRecognizer | undefined;
+  let asrProvider: SpeechProviderName = "none";
+  if (asrChoice === "none") asrProvider = "none";
+  else if (asrChoice === "openai") {
+    if (env.HEARTH_ASR_API_KEY) {
+      asr = new OpenAiTranscription({
+        baseUrl: env.HEARTH_ASR_BASE_URL || SILICONFLOW,
+        apiKey: env.HEARTH_ASR_API_KEY,
+        model: env.HEARTH_ASR_MODEL || "FunAudioLLM/SenseVoiceSmall",
+      });
+      asrProvider = "openai";
+    }
+  } else if (asrChoice === "vosk") {
+    asr = vosk;
+    asrProvider = "vosk";
+  } else if (dashAsr) {
+    asr = new FallbackRecognizer(dashAsr, vosk, report);
+    asrProvider = "dashscope";
+  } else {
+    asr = vosk;
+    asrProvider = "vosk";
+    report("DashScope speech recognition needs HEARTH_DASHSCOPE_API_KEY; using Vosk");
+  }
+  let tts: SpeechSynthesizer | undefined;
+  let ttsProvider: SpeechProviderName = "none";
+  if (ttsChoice === "none") ttsProvider = "none";
+  else if (ttsChoice === "openai") {
+    if (env.HEARTH_TTS_API_KEY) {
+      tts = new OpenAiSpeech({
+        baseUrl: env.HEARTH_TTS_BASE_URL || SILICONFLOW,
+        apiKey: env.HEARTH_TTS_API_KEY,
+        model: env.HEARTH_TTS_MODEL || "FunAudioLLM/CosyVoice2-0.5B",
+        voice: env.HEARTH_TTS_VOICE || "FunAudioLLM/CosyVoice2-0.5B:anna",
+      });
+      ttsProvider = "openai";
+    }
+  } else if (ttsChoice === "edge") {
+    tts = edge;
+    ttsProvider = "edge";
+  } else if (dashTts) {
+    tts = new FallbackSynthesizer(dashTts, edge, report);
+    ttsProvider = "dashscope";
+  } else {
+    tts = edge;
+    ttsProvider = "edge";
+    report("DashScope speech synthesis needs HEARTH_DASHSCOPE_API_KEY; using Edge");
+  }
+  return { asr, tts, asrEnabled: Boolean(asr), ttsEnabled: Boolean(tts), asrProvider, ttsProvider, notes };
 }
 
-function asrChoice(env: NodeJS.ProcessEnv): "vosk" | "openai" | "none" {
-  const value = env.HEARTH_ASR_PROVIDER;
-  if (value === "none") return "none";
-  if (value === "openai") return "openai";
-  if (value === "vosk" || value == null || value === "") return "vosk";
-  return "none";
+function providerChoice(value: string | undefined, allowed: SpeechProviderName[], fallback: SpeechProviderName): SpeechProviderName {
+  if (value == null || value === "") return fallback;
+  return allowed.includes(value as SpeechProviderName) ? value as SpeechProviderName : "none";
 }
 
-function ttsChoice(env: NodeJS.ProcessEnv): "edge" | "openai" | "none" {
-  const value = env.HEARTH_TTS_PROVIDER;
-  if (value === "none") return "none";
-  if (value === "openai") return "openai";
-  if (value === "edge" || value == null || value === "") return "edge";
-  return "none";
+class FallbackRecognizer implements SpeechRecognizer {
+  private primaryDown = false;
+  constructor(private primary: SpeechRecognizer, private fallback: SpeechRecognizer, private warn: (message: string) => void) {}
+
+  async transcribe(pcm: Int16Array, sampleRate: number): Promise<string> {
+    if (!this.primaryDown) {
+      try { return await this.primary.transcribe(pcm, sampleRate); }
+      catch (error) {
+        this.primaryDown = true;
+        this.warn(errorText(error));
+      }
+    }
+    return this.fallback.transcribe(pcm, sampleRate);
+  }
+
+  openCall(handlers: { onSentence: (text: string) => void; onError: (error: Error) => void }): Promise<SpeechCall> {
+    if (!this.primary.openCall || this.primaryDown) return Promise.reject(new SpeechProviderError(0, "dashscope asr unavailable"));
+    return this.primary.openCall({
+      onSentence: handlers.onSentence,
+      onError: (error) => {
+        this.primaryDown = true;
+        this.warn(errorText(error));
+        handlers.onError(error);
+      },
+    }).catch((error: unknown) => {
+      this.primaryDown = true;
+      const wrapped = error instanceof Error ? error : new SpeechProviderError(0, "dashscope asr failed");
+      this.warn(errorText(wrapped));
+      handlers.onError(wrapped);
+      throw wrapped;
+    });
+  }
+}
+
+class FallbackSynthesizer implements SpeechSynthesizer {
+  private primaryDown = false;
+  constructor(private primary: SpeechSynthesizer, private fallback: SpeechSynthesizer, private warn: (message: string) => void) {}
+
+  async synthesize(text: string, onChunk?: (pcm: Int16Array) => void | Promise<void>): Promise<Int16Array> {
+    if (!this.primaryDown) {
+      try { return await this.primary.synthesize(text, onChunk); }
+      catch (error) {
+        this.primaryDown = true;
+        this.warn(errorText(error));
+      }
+    }
+    return this.fallback.synthesize(text, onChunk);
+  }
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : "speech provider failed";
 }
 
 export class VoskTranscription implements SpeechRecognizer {
@@ -171,74 +266,11 @@ export class OpenAiSpeech implements SpeechSynthesizer {
   }
 }
 
-export function resampleLinear(pcm: Int16Array, fromRate: number, toRate: number): Int16Array {
-  if (fromRate === toRate || pcm.length === 0) return pcm;
-  const outLength = Math.max(1, Math.round(pcm.length * toRate / fromRate));
-  const out = new Int16Array(outLength);
-  for (let i = 0; i < outLength; i += 1) {
-    const position = i * fromRate / toRate;
-    const left = Math.floor(position);
-    const right = Math.min(left + 1, pcm.length - 1);
-    const fraction = position - left;
-    const a = pcm[left] ?? 0;
-    const b = pcm[right] ?? a;
-    out[i] = Math.round(a + (b - a) * fraction);
-  }
-  return out;
-}
-
-export function pcmToWav(pcm: Int16Array, sampleRate: number): Buffer {
-  const dataBytes = pcm.length * 2;
-  const wav = Buffer.alloc(44 + dataBytes);
-  wav.write("RIFF", 0);
-  wav.writeUInt32LE(36 + dataBytes, 4);
-  wav.write("WAVE", 8);
-  wav.write("fmt ", 12);
-  wav.writeUInt32LE(16, 16);
-  wav.writeUInt16LE(1, 20);
-  wav.writeUInt16LE(1, 22);
-  wav.writeUInt32LE(sampleRate, 24);
-  wav.writeUInt32LE(sampleRate * 2, 28);
-  wav.writeUInt16LE(2, 32);
-  wav.writeUInt16LE(16, 34);
-  wav.write("data", 36);
-  wav.writeUInt32LE(dataBytes, 40);
-  for (let i = 0; i < pcm.length; i += 1) wav.writeInt16LE(pcm[i] ?? 0, 44 + i * 2);
-  return wav;
-}
-
-export function pcmFromBytes(bytes: Buffer): Int16Array {
-  let data = bytes;
-  if (bytes.length > 44 && bytes.toString("ascii", 0, 4) === "RIFF") {
-    const marker = bytes.indexOf("data");
-    if (marker >= 0 && marker + 8 <= bytes.length) data = bytes.subarray(marker + 8);
-  }
-  const even = data.length - (data.length % 2);
-  const pcm = new Int16Array(even / 2);
-  for (let i = 0; i < pcm.length; i += 1) pcm[i] = data.readInt16LE(i * 2);
-  return pcm;
-}
-
-export function stripMarkdown(text: string): string {
-  return text
-    .replace(/```[\s\S]*?```/g, " ")
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/!\[[^\]]*]\([^)]*\)/g, " ")
-    .replace(/\[([^\]]+)]\([^)]*\)/g, "$1")
-    .replace(/^#{1,6}\s+/gm, "")
-    .replace(/[*_~|>]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
 function trimBase(url: string): string {
   return url.replace(/\/$/, "");
 }
 
 async function providerError(response: Response, secret: string): Promise<SpeechProviderError> {
   const body = await response.text().catch(() => "");
-  let detail = body.slice(0, 300);
-  if (secret) detail = detail.split(secret).join("[redacted]");
-  detail = detail.replace(/sk-[A-Za-z0-9_-]+/g, "[redacted]");
-  return new SpeechProviderError(response.status, `speech provider ${response.status}: ${detail}`);
+  return new SpeechProviderError(response.status, `speech provider ${response.status}: ${redactSecret(body.slice(0, 300), secret)}`);
 }
